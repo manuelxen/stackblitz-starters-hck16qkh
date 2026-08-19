@@ -33,7 +33,7 @@
 <body class="h-screen w-screen overflow-hidden flex flex-col">
 
     <script>
-        // Tu configuración de Firebase
+        // Tu llave de Firebase
         window.firebaseConfig = {
           apiKey: "AIzaSyA5N0yQQfPDfLKCkEbzUPHMMU-IJc6hCdA",
           authDomain: "app-de-ejercicio-a99db.firebaseapp.com",
@@ -46,17 +46,17 @@
 
         window.START_DATE = new Date("2026-08-18T00:00:00");
         window.END_DATE = new Date("2026-10-30T00:00:00");
-        window.TODAY = new Date();
 
         window.appState = {
             currentTab: 'home',
             allUsers: [],
-            userData: null
+            userData: null,
+            meals: []
         };
 
         window.showToast = function(msg, type='success') {
             const toast = document.createElement('div');
-            toast.className = `fixed top-4 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-full text-sm font-bold shadow-lg z-50 animate-fade-in ${type === 'success' ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'}`;
+            toast.className = `fixed top-4 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-full text-sm font-bold shadow-lg z-[100] animate-fade-in ${type === 'success' ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'}`;
             toast.textContent = msg;
             document.body.appendChild(toast);
             setTimeout(() => {
@@ -87,15 +87,18 @@
         };
 
         window.currentLoginUserId = null;
-
-        // Modales de Seguridad
+        window.isAdmin = false;
+        
         window.promptPin = function(userId) {
             window.currentLoginUserId = userId;
+            window.isAdmin = false;
+            document.getElementById('pin-title').innerHTML = '<i data-lucide="lock" class="w-6 h-6 text-blue-500"></i> Clave de Acceso';
             const modal = document.getElementById('pin-modal');
             modal.classList.remove('hidden');
             modal.classList.add('flex');
             document.getElementById('login-pin').value = '';
             setTimeout(() => document.getElementById('login-pin').focus(), 100);
+            if(window.lucide) window.lucide.createIcons();
         };
 
         window.closePinModal = function() {
@@ -107,14 +110,27 @@
 
         window.verifyPin = function() {
             const pin = document.getElementById('login-pin').value;
-            if(pin === '13579') { // CLAVE ADMIN
+            // EL NUEVO PIN DE ADMINISTRADOR SECRETO
+            if(pin === '010402') { 
                 window.closePinModal();
-                window.switchTab('admin');
+                if(window.currentLoginUserId) {
+                    window.isAdmin = true; // Entra al perfil como admin (Ojo de Dios)
+                    window.switchTab('profile', window.currentLoginUserId);
+                } else {
+                    window.switchTab('admin'); // Entra al panel general
+                }
                 return;
             }
+            if(!window.currentLoginUserId && pin !== '010402') {
+                window.showToast("PIN Incorrecto.", "error");
+                document.getElementById('login-pin').value = '';
+                return;
+            }
+
             const user = window.appState.allUsers.find(u => u.id === window.currentLoginUserId);
             if(user && user.pin === pin) {
                 window.closePinModal();
+                window.isAdmin = false;
                 window.switchTab('profile', user.id);
             } else {
                 window.showToast("PIN Incorrecto.", "error");
@@ -124,41 +140,47 @@
 
         window.promptAdminPin = function() {
             window.currentLoginUserId = null;
+            document.getElementById('pin-title').innerHTML = '<i data-lucide="shield-alert" class="w-6 h-6 text-amber-500"></i> Acceso Admin';
             const modal = document.getElementById('pin-modal');
             modal.classList.remove('hidden');
             modal.classList.add('flex');
             document.getElementById('login-pin').value = '';
             setTimeout(() => document.getElementById('login-pin').focus(), 100);
+            if(window.lucide) window.lucide.createIcons();
         };
     </script>
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
-        import { getFirestore, collection, doc, setDoc, onSnapshot, updateDoc, deleteDoc, arrayUnion } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+        import { getFirestore, collection, doc, setDoc, onSnapshot, updateDoc, getDoc, getDocs, arrayUnion } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+        import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-storage.js";
 
         const app = initializeApp(window.firebaseConfig);
         const db = getFirestore(app);
         const auth = getAuth(app);
+        const storage = getStorage(app);
+        
         window.db = db; 
+        window.storage = storage;
 
         onAuthStateChanged(auth, async (user) => {
             if (user) {
                 listenToParticipants();
+                listenToMeals();
             } else {
                 signInAnonymously(auth).catch(error => {
-                    console.error("Auth error", error);
-                    window.showToast("Error de conexión. Verifica Auth Anónimo en Firebase.", "error");
+                    window.showToast("Debes habilitar Auth Anónimo en Firebase.", "error");
                 });
             }
         });
 
         function listenToParticipants() {
-            const competitorsRef = collection(db, 'competitors');
-            onSnapshot(competitorsRef, (snapshot) => {
+            onSnapshot(collection(db, 'competitors'), (snapshot) => {
                 const users = [];
                 snapshot.forEach(doc => {
-                    users.push({ id: doc.id, ...doc.data() });
+                    const data = doc.data();
+                    if(!data.deleted) users.push({ id: doc.id, ...data });
                 });
                 window.appState.allUsers = users;
                 
@@ -166,8 +188,18 @@
                     window.appState.userData = users.find(u => u.id === window.appState.userData.id);
                 }
                 if(window.renderApp) window.renderApp();
-            }, (error) => {
-                console.error("Error leyendo DB:", error);
+            });
+        }
+
+        function listenToMeals() {
+            onSnapshot(collection(db, 'comidas'), (snapshot) => {
+                const meals = [];
+                snapshot.forEach(doc => {
+                    meals.push({ id: doc.id, ...doc.data() });
+                });
+                // Ordenar por más recientes
+                window.appState.meals = meals.sort((a,b) => b.timestamp - a.timestamp);
+                if(window.renderApp) window.renderApp();
             });
         }
 
@@ -194,7 +226,7 @@
                 group: group,
                 pin: pin.toString(),
                 trainingDays: [],
-                videos: { real: false, ropa: false },
+                deleted: false,
                 createdAt: new Date().toISOString()
             };
 
@@ -203,89 +235,115 @@
                 window.showToast(`¡${name} inscrito correctamente!`);
                 window.switchTab('home');
             } catch (error) {
-                console.error("Error", error);
-                window.showToast("Error guardando en Firestore.", "error");
+                window.showToast("Error guardando datos.", "error");
             }
         };
 
-        // Lógica de Webcam en Vivo para evitar galerías
-        let activeCameraCallback = null;
-
-        window.openWebcamModal = function(callback) {
-            activeCameraCallback = callback;
-            const modal = document.getElementById('webcam-modal');
-            modal.classList.remove('hidden');
-            modal.classList.add('flex');
+        window.triggerFileUpload = function(type, userId) {
+            const input = document.createElement('input');
+            input.type = 'file';
             
-            navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false })
-                .then(stream => {
-                    window.localStream = stream;
-                    const video = document.getElementById('webcam-video');
-                    video.srcObject = stream;
-                    video.play();
-                })
-                .catch(err => {
-                    console.error("Webcam error:", err);
-                    window.showToast("Debes dar permiso de cámara para participar.", "error");
-                    window.closeWebcamModal();
-                });
-        };
-
-        window.closeWebcamModal = function() {
-            if(window.localStream) {
-                window.localStream.getTracks().forEach(track => track.stop());
-                window.localStream = null;
+            // Lógica de cámara y galería
+            if(type === 'sudor' || type === 'comida') {
+                input.accept = 'image/*';
+                if(type === 'sudor') input.capture = 'environment'; // Obliga usar cámara
+            } else {
+                input.accept = 'video/*, image/*'; // Permite galería para Realidad y Ropa
             }
-            const modal = document.getElementById('webcam-modal');
-            modal.classList.add('hidden');
-            modal.classList.remove('flex');
-            activeCameraCallback = null;
-        };
 
-        window.captureWebcamSnapshot = function() {
-            window.showToast("Procesando evidencia de sudor... ⏳", "success");
-            setTimeout(async () => {
-                if(activeCameraCallback) {
-                    await activeCameraCallback();
-                }
-                window.closeWebcamModal();
-            }, 800);
-        };
+            input.onchange = async (e) => {
+                const file = e.target.files[0];
+                if(!file) return;
 
-        window.handleLiveCapture = function(type, userId) {
-            window.openWebcamModal(async () => {
+                window.showToast("Subiendo archivo... No cierres la app ⏳", "success");
+
                 try {
-                    const userRef = doc(window.db, 'competitors', userId);
-                    if (type === 'daily') {
-                        const todayStr = new Date().toISOString().split('T')[0];
+                    const now = new Date();
+                    const dateStr = now.toLocaleDateString('es-PE') + ' ' + now.toLocaleTimeString('es-PE', {hour: '2-digit', minute:'2-digit'});
+                    
+                    // Nombres únicos para Storage
+                    const fileExt = file.name.split('.').pop() || (type === 'sudor' ? 'jpg' : 'mp4');
+                    const fileName = `${type}_${Date.now()}.${fileExt}`;
+                    const storageRef = ref(window.storage, `archivos_olimpo/${userId}/${fileName}`);
+                    
+                    // Subir archivo real
+                    await uploadBytes(storageRef, file);
+                    const fileUrl = await getDownloadURL(storageRef);
+                    const tipoArch = file.type.startsWith('video') ? 'video' : 'image';
+                    
+                    if(type === 'sudor') {
+                        const todayStr = now.toISOString().split('T')[0];
+                        const userRef = doc(window.db, 'competitors', userId);
+                        
                         const user = window.appState.allUsers.find(u => u.id === userId);
-                        if(user.trainingDays && user.trainingDays.includes(todayStr)) {
-                            return window.showToast("Ya registraste tu entreno hoy.", "error");
-                        }
-                        await updateDoc(userRef, { trainingDays: arrayUnion(todayStr) });
-                        window.showToast("¡Día Registrado! +1 Punto 🔥", "success");
+                        const newDays = user.trainingDays ? [...user.trainingDays, todayStr] : [todayStr];
+                        await updateDoc(userRef, { trainingDays: newDays });
+                        
+                        await setDoc(doc(window.db, `competitors/${userId}/fotos_sudor`, todayStr), {
+                            url: fileUrl,
+                            fecha: dateStr,
+                            tipoArch: tipoArch
+                        });
+                        window.showToast("¡Sudor registrado! +1 Punto 🔥");
+                        
                     } else if (type === 'real' || type === 'ropa') {
-                        await updateDoc(userRef, { [`videos.${type}`]: true });
-                        window.showToast("¡Evidencia Guardada! 📸", "success");
+                        const photoRef = doc(window.db, `competitors/${userId}/fotos_control`, type);
+                        await setDoc(photoRef, {
+                            url: fileUrl,
+                            fecha: dateStr,
+                            tipo: type,
+                            tipoArch: tipoArch
+                        });
+                        
+                        const userRef = doc(window.db, 'competitors', userId);
+                        await updateDoc(userRef, { [`fotosControl.${type}`]: dateStr });
+                        window.showToast(`¡Archivo de ${type} guardado! 📸`);
+                        
+                    } else if (type === 'comida') {
+                        const mealId = "meal_" + Date.now();
+                        const userName = window.appState.allUsers.find(u => u.id === userId).name;
+                        await setDoc(doc(window.db, 'comidas', mealId), {
+                            userId: userId,
+                            userName: userName,
+                            url: fileUrl,
+                            fecha: dateStr,
+                            timestamp: Date.now(),
+                            votosSanos: [],
+                            votosTrampa: []
+                        });
+                        window.showToast("¡Comida subida al muro! 🥗");
                     }
                 } catch (error) {
-                    console.error("Save error", error);
-                    window.showToast("Error de conexión.", "error");
+                    console.error(error);
+                    window.showToast("Error subiendo archivo. Revisa el plan de Firebase.", "error");
                 }
-            });
+            };
+            input.click();
         };
 
-        // Panel Administrador (Edición y Borrado Real)
+        window.votarComida = async function(mealId, type) {
+            if(!window.appState.userData) return window.showToast("Ingresa a tu perfil primero.", "error");
+            const myUserId = window.appState.userData.id;
+            
+            try {
+                const mealRef = doc(window.db, 'comidas', mealId);
+                const field = type === 'sano' ? 'votosSanos' : 'votosTrampa';
+                await updateDoc(mealRef, {
+                    [field]: arrayUnion(myUserId)
+                });
+                window.showToast("¡Voto registrado!");
+            } catch(e) {
+                window.showToast("Error al votar.", "error");
+            }
+        };
+
         window.deleteCompetitor = async function(userId) {
             if(confirm("¿Seguro que deseas ELIMINAR a este competidor del Olimpo?")) {
                 try {
-                    await deleteDoc(doc(window.db, 'competitors', userId));
-                    window.appState.allUsers = window.appState.allUsers.filter(u => u.id !== userId);
-                    window.renderApp(); 
-                    window.showToast("Competidor borrado exitosamente.", "success");
+                    await updateDoc(doc(window.db, 'competitors', userId), { deleted: true });
+                    window.showToast("Competidor borrado.", "success");
                 } catch(e) {
-                    console.error("Error deleting", e);
-                    window.showToast("Error al eliminar competidor.", "error");
+                    window.showToast("Error al eliminar.", "error");
                 }
             }
         };
@@ -305,517 +363,428 @@
 
         window.closeEditModal = function() {
             window.editingUserId = null;
-            const modal = document.getElementById('edit-modal');
-            modal.classList.add('hidden');
-            modal.classList.remove('flex');
+            document.getElementById('edit-modal').classList.add('hidden');
+            document.getElementById('edit-modal').classList.remove('flex');
         };
 
         window.saveEditModal = async function() {
             if(!window.editingUserId) return;
-            const newName = document.getElementById('edit-name').value;
-            const newPin = document.getElementById('edit-pin').value;
-            const newWeight = document.getElementById('edit-weight').value;
-
             try {
                 await updateDoc(doc(window.db, 'competitors', window.editingUserId), {
-                    name: newName,
-                    pin: newPin,
-                    startWeight: parseFloat(newWeight)
+                    name: document.getElementById('edit-name').value,
+                    pin: document.getElementById('edit-pin').value,
+                    startWeight: parseFloat(document.getElementById('edit-weight').value)
                 });
-                window.showToast("Datos actualizados correctamente.", "success");
+                window.showToast("Datos actualizados.");
                 window.closeEditModal();
             } catch (error) {
                 window.showToast("Error actualizando datos.", "error");
             }
         };
-    </script>
-    
-    <header class="bg-slate-900 border-b border-slate-800 p-4 pb-2 z-10 flex-shrink-0 flex justify-between items-center">
-        <div>
-            <h1 class="text-xs text-blue-500 font-bold tracking-widest uppercase">Reto Olimpo</h1>
-            <h2 class="text-lg font-black italic">Ya no quiero estar como el chulo</h2>
-        </div>
-        <div class="flex items-center gap-3">
-            <div class="text-right">
-                <div class="text-[10px] text-slate-500 uppercase font-bold">Restantes</div>
-                <div id="countdown" class="text-sm font-black text-white">--</div>
-            </div>
-            <button onclick="window.promptAdminPin()" class="bg-slate-800 hover:bg-slate-700 p-2 rounded-xl border border-slate-700 text-slate-300">
-                <i data-lucide="shield-alert" class="w-5 h-5 text-amber-400"></i>
-            </button>
-        </div>
-    </header>
 
-    <main id="main-content" class="flex-grow overflow-y-auto p-4 pb-24 relative">
-        <!-- Injected by JavaScript -->
-    </main>
+        window.loadAdminPhotos = async function(userId) {
+            const container = document.getElementById('admin-photos-container');
+            if(!container) return;
+            try {
+                let html = '<div class="space-y-4">';
+                
+                // Cargar Control
+                const controlSnap = await getDocs(collection(window.db, `competitors/${userId}/fotos_control`));
+                html += `<div><strong class="text-white text-xs">Pruebas de Control (Originales):</strong><div class="flex gap-2 overflow-x-auto mt-2">`;
+                if(controlSnap.empty) html += `<span class="text-xs text-slate-500">Sin archivos</span>`;
+                controlSnap.forEach(doc => {
+                    const data = doc.data();
+                    html += `<div class="shrink-0 w-32 border border-slate-700 rounded p-1 bg-slate-900">
+                      ${data.tipoArch === 'video' ? `<video src="${data.url}" controls class="w-full h-24 object-cover rounded mb-1"></video>` : `<img src="${data.url}" class="w-full h-24 object-cover rounded mb-1">`}
+                      <div class="text-[10px] text-slate-300 text-center font-bold">${doc.id.toUpperCase()}</div>
+                      <div class="text-[9px] text-slate-500 text-center">${data.fecha}</div>
+                    </div>`;
+                });
+                html += `</div></div>`;
 
-    <div id="pin-modal" class="fixed inset-0 bg-slate-900/95 backdrop-blur-md z-50 hidden flex-col items-center justify-center p-4">
-        <div class="bg-slate-800 p-6 rounded-3xl w-full max-w-sm border border-slate-700 shadow-2xl animate-fade-in relative overflow-hidden">
-            <div class="absolute top-0 left-0 w-full h-1 bg-blue-500"></div>
-            <h3 class="text-2xl font-black text-white mb-1 text-center mt-2 flex items-center justify-center gap-2">
-                <i data-lucide="lock" class="w-6 h-6 text-blue-500"></i> Clave de Acceso
-            </h3>
-            <p class="text-sm text-slate-400 text-center mb-6">Ingresa el PIN (13579 para Admin).</p>
-            <div class="flex justify-center mb-6">
-                <input type="password" id="login-pin" inputmode="numeric" maxlength="5" class="w-44 bg-slate-900/80 border border-slate-600 text-white text-center text-3xl font-black rounded-2xl px-4 py-3 focus:outline-none focus:border-blue-500 tracking-[0.4em] shadow-inner" placeholder="••••">
-            </div>
-            <div class="flex gap-3">
-                <button onclick="window.closePinModal()" class="w-1/3 bg-slate-700 text-slate-300 font-bold py-3 rounded-xl hover:bg-slate-600">Atrás</button>
-                <button onclick="window.verifyPin()" class="w-2/3 bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-500 shadow-lg shadow-blue-900/50">Entrar</button>
-            </div>
-        </div>
-    </div>
+                // Cargar Sudor
+                const sudorSnap = await getDocs(collection(window.db, `competitors/${userId}/fotos_sudor`));
+                html += `<div><strong class="text-white text-xs">Fotos de Sudor:</strong><div class="flex gap-2 overflow-x-auto mt-2">`;
+                if(sudorSnap.empty) html += `<span class="text-xs text-slate-500">Sin archivos</span>`;
+                sudorSnap.forEach(doc => {
+                    const data = doc.data();
+                    html += `<div class="shrink-0 w-32 border border-slate-700 rounded p-1 bg-slate-900">
+                      <img src="${data.url}" class="w-full h-24 object-cover rounded mb-1">
+                      <div class="text-[10px] text-slate-300 text-center">${doc.id}</div>
+                      <div class="text-[9px] text-slate-500 text-center">${data.fecha}</div>
+                    </div>`;
+                });
+                html += `</div></div>`;
 
-    <div id="webcam-modal" class="fixed inset-0 bg-slate-900/95 backdrop-blur-md z-50 hidden flex-col items-center justify-center p-4">
-        <div class="bg-slate-800 p-4 rounded-3xl w-full max-w-md border border-slate-700 shadow-2xl animate-fade-in flex flex-col items-center">
-            <h3 class="text-lg font-black text-white mb-2 flex items-center gap-2">
-                <i data-lucide="camera" class="w-5 h-5 text-emerald-400"></i> Cámara Anti-Trampas
-            </h3>
-            <p class="text-xs text-red-400 mb-4 text-center font-bold">La galería está bloqueada. Demuestra que estás sudando AHORA.</p>
-            <div class="w-full h-72 bg-black rounded-2xl overflow-hidden relative border border-slate-700 mb-4 flex items-center justify-center">
-                <video id="webcam-video" autoplay playsinline class="w-full h-full object-cover"></video>
-            </div>
-            <div class="flex gap-3 w-full">
-                <button onclick="window.closeWebcamModal()" class="w-1/2 bg-slate-700 text-slate-300 font-bold py-3 rounded-xl">Cancelar</button>
-                <button onclick="window.captureWebcamSnapshot()" class="w-1/2 bg-emerald-600 text-white font-black py-3 rounded-xl shadow-lg flex items-center justify-center gap-2">
-                    <i data-lucide="scan-line" class="w-5 h-5"></i> Capturar
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <div id="edit-modal" class="fixed inset-0 bg-slate-900/95 backdrop-blur-md z-50 hidden flex-col items-center justify-center p-4">
-        <div class="bg-slate-800 p-6 rounded-3xl w-full max-w-sm border border-slate-700 shadow-2xl animate-fade-in">
-            <h3 class="text-xl font-black text-white mb-4 flex items-center gap-2">
-                <i data-lucide="edit-3" class="w-5 h-5 text-blue-500"></i> Editar Competidor
-            </h3>
-            <div class="space-y-4 mb-6">
-                <div>
-                    <label class="block text-xs text-slate-400 mb-1">Nombre</label>
-                    <input type="text" id="edit-name" class="w-full bg-slate-900 border border-slate-700 text-white rounded-xl px-3 py-2">
-                </div>
-                <div>
-                    <label class="block text-xs text-slate-400 mb-1">PIN</label>
-                    <input type="text" id="edit-pin" class="w-full bg-slate-900 border border-slate-700 text-white rounded-xl px-3 py-2">
-                </div>
-                <div>
-                    <label class="block text-xs text-slate-400 mb-1">Peso Inicial (Kg)</label>
-                    <input type="number" id="edit-weight" class="w-full bg-slate-900 border border-slate-700 text-white rounded-xl px-3 py-2">
-                </div>
-            </div>
-            <div class="flex gap-3">
-                <button onclick="window.closeEditModal()" class="w-1/2 bg-slate-700 text-white font-bold py-3 rounded-xl">Cancelar</button>
-                <button onclick="window.saveEditModal()" class="w-1/2 bg-blue-600 text-white font-bold py-3 rounded-xl">Guardar</button>
-            </div>
-        </div>
-    </div>
-
-    <nav class="bg-slate-900 border-t border-slate-800 absolute bottom-0 w-full flex justify-around p-2 pb-safe z-10 flex-shrink-0">
-        <button onclick="window.switchTab('home')" class="nav-btn flex flex-col items-center p-2 text-blue-500 transition-colors w-1/4" data-tab="home">
-            <i data-lucide="users" class="w-5 h-5"></i>
-            <span class="text-[9px] mt-1 font-bold">Inicio</span>
-        </button>
-        <button onclick="window.switchTab('bases')" class="nav-btn flex flex-col items-center p-2 text-slate-500 transition-colors w-1/4" data-tab="bases">
-            <i data-lucide="book-open" class="w-5 h-5"></i>
-            <span class="text-[9px] mt-1 font-bold">Bases</span>
-        </button>
-        <button onclick="window.switchTab('retos')" class="nav-btn flex flex-col items-center p-2 text-slate-500 transition-colors w-1/4" data-tab="retos">
-            <i data-lucide="flame" class="w-5 h-5"></i>
-            <span class="text-[9px] mt-1 font-bold">Retos</span>
-        </button>
-        <button onclick="window.switchTab('ranking')" class="nav-btn flex flex-col items-center p-2 text-slate-500 transition-colors w-1/4" data-tab="ranking">
-            <i data-lucide="trophy" class="w-5 h-5"></i>
-            <span class="text-[9px] mt-1 font-bold">Ranking</span>
-        </button>
-    </nav>
-
-    <script>
-        window.renderApp = function() {
-            const main = document.getElementById('main-content');
-            const diff = window.END_DATE - window.TODAY;
-            const daysLeft = Math.ceil(diff / (1000 * 60 * 60 * 24));
-            document.getElementById('countdown').textContent = `${daysLeft > 0 ? daysLeft : 0} Días`;
-
-            switch(window.appState.currentTab) {
-                case 'home': renderDashboard(main); break;
-                case 'onboarding': renderOnboarding(main); break;
-                case 'profile': renderProfile(main); break;
-                case 'ranking': renderRanking(main); break;
-                case 'retos': renderRetos(main); break;
-                case 'bases': renderBases(main); break;
-                case 'admin': renderAdmin(main); break;
-                default: renderDashboard(main);
+                html += '</div>';
+                container.innerHTML = html;
+            } catch(e) {
+                console.error(e);
+                container.innerHTML = '<span class="text-red-400">Error cargando base de datos.</span>';
             }
-            if(window.lucide) window.lucide.createIcons();
         };
 
-        function renderDashboard(container) {
-            let html = `
-                <div class="animate-fade-in pb-4">
+        window.renderApp = function() {
+            const container = document.getElementById('app-content');
+            let html = '';
+
+            const today = new Date();
+            const totalDays = Math.ceil((window.END_DATE - window.START_DATE) / (1000 * 60 * 60 * 24));
+            const daysPassed = Math.max(0, Math.ceil((today - window.START_DATE) / (1000 * 60 * 60 * 24)));
+            const daysRemaining = Math.max(0, totalDays - daysPassed);
+
+            if (window.appState.currentTab === 'home') {
+                html += `
                     <div class="flex justify-between items-center mb-6">
                         <div>
-                            <h2 class="text-2xl font-black text-white">Competidores</h2>
+                            <h1 class="text-2xl font-black text-blue-500 uppercase tracking-tighter">RETO OLIMPO</h1>
+                            <p class="text-xs text-slate-400 font-bold">Ya no quiero estar como el chulo</p>
+                        </div>
+                        <div class="text-right flex flex-col items-end">
+                            <span class="text-xs text-slate-400 uppercase font-bold tracking-widest">Restantes</span>
+                            <span class="text-2xl font-black text-white">${daysRemaining} Días</span>
+                        </div>
+                    </div>
+
+                    <div class="flex justify-between items-end mb-4">
+                        <div>
+                            <h2 class="text-xl font-bold">Competidores</h2>
                             <p class="text-xs text-slate-400">Toca tu nombre para entrar y sudar</p>
                         </div>
-                        <button onclick="window.switchTab('onboarding')" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl shadow-lg flex items-center gap-2 font-bold text-sm">
+                        <button onclick="window.switchTab('add-user')" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 shadow-lg shadow-blue-900/50 transition-colors">
                             <i data-lucide="user-plus" class="w-4 h-4"></i> Añadir
                         </button>
                     </div>
-            `;
-
-            if(window.appState.allUsers.length === 0) {
-                html += `
-                    <div class="h-64 flex flex-col items-center justify-center text-center p-6 border-2 border-dashed border-slate-700 rounded-2xl">
-                        <div class="bg-slate-800 p-4 rounded-full mb-4">
-                            <i data-lucide="users" class="w-10 h-10 text-slate-400"></i>
-                        </div>
-                        <h3 class="text-lg font-bold text-white mb-2">Ningún espartano aún</h3>
-                        <button onclick="window.switchTab('onboarding')" class="px-6 py-3 bg-white text-black font-bold rounded-full shadow-lg mt-2">Inscribir al primero</button>
-                    </div>
+                    <div class="space-y-3 pb-24">
                 `;
-            } else {
-                html += `<div class="grid grid-cols-1 gap-3">`;
+                
+                if(window.appState.allUsers.length === 0) {
+                    html += `<div class="text-center p-8 bg-slate-800/50 rounded-2xl border border-slate-700/50 text-slate-400"><p>No hay competidores aún.</p><p class="text-xs mt-2">¡Añade al primero para empezar!</p></div>`;
+                }
+
                 window.appState.allUsers.forEach(user => {
-                    const days = user.trainingDays ? user.trainingDays.length : 0;
-                    const imcColor = user.group.includes('A') ? 'text-red-400' : 'text-emerald-400';
-                    
+                    const daysTrained = user.trainingDays ? user.trainingDays.length : 0;
                     html += `
-                        <div onclick="window.promptPin('${user.id}')" class="glass-panel p-4 rounded-2xl flex items-center justify-between cursor-pointer border border-slate-700/50 hover:border-blue-500 transition-colors">
+                        <div onclick="window.promptPin('${user.id}')" class="glass-panel p-4 rounded-2xl border border-slate-700 hover:border-blue-500 cursor-pointer transition-all active:scale-95 flex items-center justify-between group">
                             <div class="flex items-center gap-4">
-                                <div class="w-12 h-12 bg-slate-800 rounded-full flex items-center justify-center border border-slate-600 text-xl font-black text-white shadow-inner">
+                                <div class="w-12 h-12 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-xl font-black shadow-lg">
                                     ${user.name.charAt(0).toUpperCase()}
                                 </div>
                                 <div>
-                                    <h3 class="font-bold text-lg text-white leading-none">${user.name}</h3>
-                                    <div class="flex gap-2 mt-2">
-                                        <span class="text-[9px] bg-blue-900/40 border border-blue-500/30 px-2 py-0.5 rounded text-blue-300 font-bold">Gpo ${user.group.charAt(0)}</span>
-                                        <span class="text-[9px] bg-slate-800 border border-slate-600 px-2 py-0.5 rounded ${imcColor} font-bold">IMC ${user.imc}</span>
+                                    <h3 class="font-bold text-lg group-hover:text-blue-400 transition-colors">${user.name}</h3>
+                                    <div class="flex gap-2 mt-1">
+                                        <span class="text-[10px] px-2 py-0.5 bg-blue-900/50 text-blue-300 border border-blue-500/30 rounded-md font-bold">Gpo ${user.group.charAt(0)}</span>
+                                        <span class="text-[10px] px-2 py-0.5 bg-slate-800 text-slate-300 border border-slate-600 rounded-md">IMC ${user.imc}</span>
                                     </div>
                                 </div>
                             </div>
-                            <div class="text-right flex flex-col items-end">
-                                <div class="font-black text-2xl text-white leading-none">${days}</div>
-                                <div class="text-[8px] uppercase font-black tracking-widest text-slate-500 mt-1">Pts</div>
+                            <div class="text-right">
+                                <div class="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-b from-white to-slate-400">${daysTrained}</div>
+                                <div class="text-[10px] text-slate-500 uppercase font-bold tracking-wider">PTS</div>
                             </div>
                         </div>
                     `;
                 });
                 html += `</div>`;
             }
-            container.innerHTML = html + `</div>`;
-        }
 
-        function renderOnboarding(container) {
-            container.innerHTML = `
-                <div class="glass-panel p-6 rounded-2xl animate-fade-in border border-slate-700/50">
-                    <div class="flex justify-between items-center mb-6">
-                        <button onclick="window.switchTab('home')" class="text-slate-400 hover:text-white bg-slate-800 p-2 rounded-full">
-                            <i data-lucide="arrow-left" class="w-5 h-5"></i>
-                        </button>
-                        <h2 class="text-xl font-black text-white">Nuevo Competidor</h2>
-                        <div class="w-9"></div>
+            else if (window.appState.currentTab === 'add-user') {
+                html += `
+                    <div class="mb-6 flex items-center gap-3">
+                        <button onclick="window.switchTab('home')" class="p-2 bg-slate-800 rounded-full text-slate-400 hover:text-white"><i data-lucide="arrow-left" class="w-5 h-5"></i></button>
+                        <h2 class="text-xl font-bold">Nuevo Competidor</h2>
                     </div>
-                    
-                    <div class="space-y-4">
-                        <div>
-                            <label class="block text-xs font-bold text-slate-400 uppercase mb-2">Nombre o Apodo</label>
-                            <input type="text" id="reg-name" placeholder="Ej: Manuel..." class="w-full bg-slate-900/50 border border-slate-700 text-white rounded-xl px-4 py-3 focus:outline-none focus:border-blue-500">
-                        </div>
+                    <div class="glass-panel p-6 rounded-2xl border border-slate-700 space-y-4">
+                        <div><label class="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">Nombre (Apodo)</label><input type="text" id="reg-name" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white focus:border-blue-500 focus:outline-none" placeholder="Ej. El Chulo"></div>
                         <div class="grid grid-cols-2 gap-4">
-                            <div>
-                                <label class="block text-xs font-bold text-slate-400 uppercase mb-2">Peso (Kg)</label>
-                                <input type="number" id="reg-weight" step="0.1" placeholder="Ej: 85.5" class="w-full bg-slate-900/50 border border-slate-700 text-white rounded-xl px-4 py-3 focus:outline-none focus:border-blue-500">
-                            </div>
-                            <div>
-                                <label class="block text-xs font-bold text-slate-400 uppercase mb-2">Altura (Metros)</label>
-                                <input type="number" id="reg-height" step="0.01" placeholder="Ej: 1.75" class="w-full bg-slate-900/50 border border-slate-700 text-white rounded-xl px-4 py-3 focus:outline-none focus:border-blue-500">
-                            </div>
+                            <div><label class="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">Peso (kg)</label><input type="number" step="0.1" id="reg-weight" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white focus:border-blue-500 focus:outline-none" placeholder="85.5"></div>
+                            <div><label class="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">Estatura (cm)</label><input type="number" id="reg-height" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white focus:border-blue-500 focus:outline-none" placeholder="175"></div>
                         </div>
                         <div>
-                            <label class="block text-xs font-bold text-slate-400 uppercase mb-2 flex items-center gap-1">
-                                <i data-lucide="shield" class="w-3 h-3 text-blue-400"></i> PIN (4 Dígitos)
-                            </label>
-                            <input type="password" id="reg-pin" inputmode="numeric" maxlength="4" placeholder="••••" class="w-full bg-slate-900/80 border border-slate-700 text-white rounded-xl px-4 py-3 text-center text-xl tracking-[0.5em] font-black focus:outline-none focus:border-blue-500">
+                            <label class="text-xs font-bold text-amber-500 uppercase tracking-wider block mb-1 flex items-center gap-1"><i data-lucide="lock" class="w-3 h-3"></i> PIN Secreto (4 dígitos)</label>
+                            <input type="number" id="reg-pin" class="w-full bg-slate-900 border border-amber-500/50 rounded-xl px-4 py-3 text-amber-500 font-black tracking-[0.5em] text-center focus:border-amber-500 focus:outline-none" placeholder="****">
+                            <p class="text-[10px] text-slate-500 text-center mt-1">Guarda este PIN, lo necesitarás para entrar a tu perfil.</p>
                         </div>
-                    </div>
-                    <button onclick="window.processRegistration()" class="w-full bg-blue-600 text-white font-bold py-4 rounded-xl mt-8 shadow-lg shadow-blue-900/50 flex justify-center items-center gap-2 text-lg">
-                        Inscribirse al Reto
-                    </button>
-                </div>
-            `;
-        }
-
-        function renderProfile(container) {
-            const user = window.appState.userData;
-            if(!user) return window.switchTab('home');
-
-            const videoRealDone = user.videos && user.videos.real;
-            const videoRopaDone = user.videos && user.videos.ropa;
-            const points = user.trainingDays ? user.trainingDays.length : 0;
-
-            const year = 2026;
-            const month = window.TODAY.getMonth();
-            const daysInMonth = new Date(year, month + 1, 0).getDate();
-            const firstDayIndex = new Date(year, month, 1).getDay();
-
-            let calendarGridHtml = '';
-            const weekDays = ['D', 'L', 'M', 'X', 'J', 'V', 'S'];
-            weekDays.forEach(d => {
-                calendarGridHtml += `<div class="text-[10px] font-black text-slate-500 text-center py-1">${d}</div>`;
-            });
-
-            let offset = firstDayIndex === 0 ? 6 : firstDayIndex - 1; 
-            for(let i = 0; i < offset; i++) {
-                calendarGridHtml += `<div></div>`;
-            }
-
-            for(let day = 1; day <= daysInMonth; day++) {
-                const monthStr = String(month + 1).padStart(2, '0');
-                const dayStr = String(day).padStart(2, '0');
-                const dateKey = `${year}-${monthStr}-${dayStr}`;
-                const trained = user.trainingDays && user.trainingDays.includes(dateKey);
-
-                calendarGridHtml += `
-                    <div class="h-10 rounded-xl flex flex-col items-center justify-center text-xs font-bold relative border ${trained ? 'bg-blue-600 border-blue-400 text-white shadow-lg' : 'bg-slate-900/40 border-slate-800 text-slate-400'}">
-                        <span>${day}</span>
-                        ${trained ? '<span class="absolute -bottom-1 -right-1 text-sm drop-shadow-md">🏋️</span>' : ''}
+                        <button onclick="window.processRegistration()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl mt-4 shadow-lg shadow-blue-900/50 transition-colors">Inscribir al Olimpo</button>
                     </div>
                 `;
             }
 
-            const mesNombres = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
-
-            container.innerHTML = `
-                <div class="animate-fade-in pb-8">
-                    <button onclick="window.switchTab('home')" class="mb-4 flex items-center gap-2 text-sm text-slate-400 font-bold hover:text-white">
-                        <i data-lucide="arrow-left" class="w-4 h-4"></i> Volver
-                    </button>
-
-                    <div class="bg-gradient-to-br from-slate-800 to-slate-900 p-6 rounded-3xl border border-slate-700 mb-6 shadow-xl relative overflow-hidden">
-                        <div class="flex justify-between items-start mb-1 relative z-10">
-                            <div>
-                                <h2 class="text-3xl font-black text-white leading-tight">${user.name}</h2>
-                                <div class="flex gap-2 mt-2">
-                                    <span class="bg-blue-600/20 text-blue-400 text-[10px] px-2 py-1 rounded border border-blue-500/20 font-bold uppercase">Gpo: ${user.group}</span>
-                                    <span class="bg-slate-700 text-slate-300 text-[10px] px-2 py-1 rounded font-bold uppercase">${user.startWeight} Kg</span>
-                                </div>
-                            </div>
-                            <div class="bg-slate-900 border border-slate-700 rounded-2xl px-4 py-3 text-center shadow-inner">
-                                <div class="text-3xl font-black text-blue-500 leading-none">${points}</div>
-                                <div class="text-[9px] text-slate-400 uppercase font-bold tracking-wider mt-1">PTS</div>
-                            </div>
-                        </div>
-
-                        <div class="mt-6 pt-6 border-t border-slate-700/50 relative z-10">
-                            <p class="text-xs text-slate-400 mb-3 text-center font-bold">Registro Diario Anti-Trampas (Solo WebCam)</p>
-                            <button onclick="window.handleLiveCapture('daily', '${user.id}')" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-black py-4 rounded-2xl shadow-lg flex justify-center items-center gap-3 active:scale-95 transition-all border border-emerald-400/50">
-                                <i data-lucide="camera" class="w-6 h-6"></i> TOMAR FOTO SUDANDO (+1 PT)
-                            </button>
-                        </div>
-                    </div>
-
-                    <h3 class="text-xs font-black text-slate-500 uppercase tracking-widest mb-3 ml-1 flex items-center gap-2">
-                        <i data-lucide="calendar-days" class="w-4 h-4"></i> Calendario de Constancia
-                    </h3>
-                    <div class="glass-panel p-4 rounded-2xl border border-slate-700/50 mb-6">
-                        <div class="text-sm font-bold text-white mb-3 text-center tracking-wider uppercase">${mesNombres[month]} ${year}</div>
-                        <div class="grid grid-cols-7 gap-1.5">
-                            ${calendarGridHtml}
-                        </div>
-                    </div>
-
-                    <h3 class="text-xs font-black text-slate-500 uppercase tracking-widest mb-3 ml-1 flex items-center gap-2">
-                        <i data-lucide="video" class="w-4 h-4"></i> Pruebas de Control
-                    </h3>
-                    <div class="space-y-3">
-                        <div class="glass-panel p-4 rounded-2xl flex items-center justify-between border ${!videoRealDone ? 'border-red-500/30 bg-red-900/10' : 'border-emerald-500/30 bg-emerald-900/10'}">
-                            <div>
-                                <h4 class="font-bold text-white text-sm">Video "Realidad"</h4>
-                                <p class="text-[10px] text-slate-400">Sin polo (Giro 360°)</p>
-                            </div>
-                            ${!videoRealDone ? `
-                                <button onclick="window.handleLiveCapture('real', '${user.id}')" class="px-4 py-2 rounded-xl font-bold text-xs bg-red-500/20 text-red-400 border border-red-500/50 flex items-center gap-2">
-                                    <i data-lucide="video" class="w-4 h-4"></i> Grabar
-                                </button>
-                            ` : `<span class="text-emerald-400 text-xs font-bold flex items-center gap-1"><i data-lucide="check-circle-2" class="w-4 h-4"></i> Listo</span>`}
-                        </div>
-
-                        <div class="glass-panel p-4 rounded-2xl flex items-center justify-between border ${!videoRopaDone ? 'border-orange-500/30 bg-orange-900/10' : 'border-emerald-500/30 bg-emerald-900/10'}">
-                            <div>
-                                <h4 class="font-bold text-white text-sm">Video "Ropa Control"</h4>
-                                <p class="text-[10px] text-slate-400">Prenda mal ajustada</p>
-                            </div>
-                            ${!videoRopaDone ? `
-                                <button onclick="window.handleLiveCapture('ropa', '${user.id}')" class="px-4 py-2 rounded-xl font-bold text-xs bg-orange-500/20 text-orange-400 border border-orange-500/50 flex items-center gap-2">
-                                    <i data-lucide="video" class="w-4 h-4"></i> Grabar
-                                </button>
-                            ` : `<span class="text-emerald-400 text-xs font-bold flex items-center gap-1"><i data-lucide="check-circle-2" class="w-4 h-4"></i> Listo</span>`}
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-
-        function renderBases(container) {
-            container.innerHTML = `
-                <div class="animate-fade-in pb-8">
-                    <h2 class="text-2xl font-black text-white mb-1 text-center mt-2">Bases Oficiales</h2>
-                    <p class="text-xs text-blue-400 font-bold text-center mb-6 uppercase tracking-widest">YA NO QUIERO ESTAR COMO EL CHULO</p>
-                    
-                    <div class="space-y-4">
-                        <div class="glass-panel p-5 rounded-2xl border border-slate-700/50">
-                            <h3 class="text-lg font-black text-white mb-2 flex items-center gap-2"><span class="bg-blue-600 w-6 h-6 flex items-center justify-center rounded-full text-xs">1</span> El Sudor Diario</h3>
-                            <p class="text-sm text-blue-400 font-bold">+1 Pto por día entrenado.</p>
-                            <p class="text-xs text-slate-400 mt-2">Cámara en vivo obligatoria. La galería está prohibida. Auditoría final el 30 Oct. Si se detecta trampa: <span class="text-red-400 font-bold">-2 Puntos</span>.</p>
-                        </div>
-
-                        <div class="glass-panel p-5 rounded-2xl border border-slate-700/50">
-                            <h3 class="text-lg font-black text-white mb-2 flex items-center gap-2"><span class="bg-blue-600 w-6 h-6 flex items-center justify-center rounded-full text-xs">2</span> Categorías de Peso</h3>
-                            <p class="text-xs text-slate-300 mb-3">La app calcula tu porcentaje de mejora (PCP) según tu IMC inicial.</p>
-                            <div class="grid grid-cols-2 gap-2">
-                                <div class="bg-slate-900/50 p-2 rounded-xl border border-slate-700">
-                                    <div class="text-[10px] font-bold text-red-400 mb-1">GRUPO A (Bajar)</div>
-                                    <div class="text-[10px] text-white">3% a 5% = +10 Pts</div>
-                                    <div class="text-[10px] text-white">5% a 8% = +15 Pts</div>
-                                    <div class="text-[10px] text-white">> 8% = +20 Pts</div>
-                                </div>
-                                <div class="bg-slate-900/50 p-2 rounded-xl border border-slate-700">
-                                    <div class="text-[10px] font-bold text-emerald-400 mb-1">GRUPO B (Subir)</div>
-                                    <div class="text-[10px] text-white">2% a 4% = +15 Pts</div>
-                                    <div class="text-[10px] text-white">> 4% = +10 Pts</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="glass-panel p-5 rounded-2xl border border-slate-700/50">
-                            <h3 class="text-lg font-black text-white mb-2 flex items-center gap-2"><span class="bg-blue-600 w-6 h-6 flex items-center justify-center rounded-full text-xs">3</span> Los Videos Visuales</h3>
-                            <ul class="text-xs text-slate-400 space-y-2">
-                                <li><strong>Set 1 Realidad:</strong> Sin polo en short. Giro de 360 grados.</li>
-                                <li><strong>Set 2 Control:</strong> Usar la misma ropa mal ajustada (1 polo, 1 pantalón) en el video inicial y final.</li>
-                            </ul>
-                        </div>
-
-                        <div class="glass-panel p-5 rounded-2xl border border-blue-500/50 bg-blue-900/10">
-                            <h3 class="text-lg font-black text-blue-400 mb-2 flex items-center gap-2"><span class="bg-blue-600 text-white w-6 h-6 flex items-center justify-center rounded-full text-xs">4</span> La Gran Final</h3>
-                            <ul class="text-xs text-white space-y-2">
-                                <li>👁️ <strong>Votación:</strong> Todos votan del 1 al 5 el cambio visual de los compañeros.</li>
-                                <li>🏆 <strong>Ganadores:</strong> La suma total define el Top 3.</li>
-                                <li>💀 <strong>Penitencia:</strong> Los últimos 2 lugares pagan el castigo.</li>
-                            </ul>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-
-        function renderRetos(container) {
-            container.innerHTML = `
-                <div class="animate-fade-in pb-6">
-                    <h2 class="text-2xl font-black text-white mb-1 text-center mt-2">Reto Semanal</h2>
-                    <p class="text-xs text-slate-400 text-center mb-6">Demuestra tu disciplina alimenticia.</p>
-                    
-                    <div class="space-y-4">
-                        <div class="glass-panel p-6 rounded-3xl border-2 border-emerald-500/50 relative overflow-hidden bg-emerald-900/10 shadow-lg shadow-emerald-900/20">
-                            <div class="absolute -right-4 -top-4 text-7xl opacity-10">🥩</div>
-                            <div class="flex justify-between items-start mb-3">
-                                <h3 class="text-xl font-black text-emerald-400">El Rey de la Proteína</h3>
-                                <span class="bg-emerald-600 text-white text-[10px] font-black px-3 py-1.5 rounded-lg shadow-inner">+4 PUNTOS</span>
-                            </div>
-                            <p class="text-sm text-slate-300 mb-4 leading-relaxed">Sube al grupo de WhatsApp 1 foto diaria de tus almuerzos demostrando que la mitad de tu plato es proteína o verdura.</p>
-                            <div class="bg-slate-900/60 p-3 rounded-xl border border-slate-700/50">
-                                <p class="text-xs text-slate-400"><strong class="text-emerald-500 font-bold">Validación:</strong> Auditable por todos los miembros durante 5 días seguidos en el chat.</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-
-        function renderRanking(container) {
-            const sortedUsers = [...window.appState.allUsers].sort((a, b) => {
-                const countA = a.trainingDays ? a.trainingDays.length : 0;
-                const countB = b.trainingDays ? b.trainingDays.length : 0;
-                return countB - countA;
-            });
-
-            let html = `
-                <div class="animate-fade-in pb-6">
-                    <h2 class="text-2xl font-black text-white mb-1 text-center mt-2">Ranking General</h2>
-                    <p class="text-xs text-slate-400 text-center mb-6">Basado en días de sudor verificados</p>
-                    <div class="space-y-3">
-            `;
-
-            sortedUsers.forEach((user, index) => {
-                let badge = `<div class="w-10 h-10 flex items-center justify-center font-black text-slate-500 text-lg bg-slate-900 rounded-full border border-slate-700 shadow-inner">#${index+1}</div>`;
-                if(index === 0) badge = `<div class="w-10 h-10 flex items-center justify-center text-3xl drop-shadow-[0_0_8px_rgba(250,204,21,0.6)]">🥇</div>`;
-                if(index === 1) badge = `<div class="w-10 h-10 flex items-center justify-center text-3xl drop-shadow-[0_0_8px_rgba(156,163,175,0.6)]">🥈</div>`;
-                if(index === 2) badge = `<div class="w-10 h-10 flex items-center justify-center text-3xl drop-shadow-[0_0_8px_rgba(180,83,9,0.6)]">🥉</div>`;
-
-                const points = user.trainingDays ? user.trainingDays.length : 0;
+            else if (window.appState.currentTab === 'profile' && window.appState.userData) {
+                const u = window.appState.userData;
+                const todayStr = new Date().toISOString().split('T')[0];
+                const trainedToday = u.trainingDays && u.trainingDays.includes(todayStr);
+                const daysTrained = u.trainingDays ? u.trainingDays.length : 0;
                 
+                // Calcular comidas válidas de la semana actual
+                const now = new Date();
+                const dayOfWeek = now.getDay() === 0 ? 6 : now.getDay() - 1; 
+                const mondayThisWeek = new Date(now);
+                mondayThisWeek.setDate(now.getDate() - dayOfWeek);
+                mondayThisWeek.setHours(0,0,0,0);
+                
+                let validMealsThisWeek = 0;
+                window.appState.meals.forEach(m => {
+                    if(m.userId === u.id && m.timestamp >= mondayThisWeek.getTime()) {
+                        if(m.votosSanos && m.votosTrampa && m.votosSanos.length > m.votosTrampa.length) {
+                            validMealsThisWeek++;
+                        }
+                    }
+                });
+
+                const mealPoints = validMealsThisWeek >= 5 ? 5 : 0;
+                const totalScore = daysTrained + mealPoints;
+
                 html += `
-                    <div class="glass-panel p-4 rounded-2xl flex items-center justify-between border border-slate-700/50">
-                        <div class="flex items-center gap-4">
-                            ${badge}
+                    <div class="mb-6 flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <button onclick="window.switchTab('home')" class="p-2 bg-slate-800 rounded-full text-slate-400 hover:text-white"><i data-lucide="arrow-left" class="w-5 h-5"></i></button>
                             <div>
-                                <h3 class="font-bold text-white text-lg leading-tight">${user.name}</h3>
-                                <p class="text-[10px] text-slate-400 font-bold uppercase mt-1">Gpo ${user.group.charAt(0)}</p>
+                                <h2 class="text-xl font-bold flex items-center gap-2">${u.name} ${window.isAdmin ? '<span class="px-2 py-0.5 bg-amber-500/20 text-amber-500 text-[10px] rounded border border-amber-500/50">VISTA ADMIN</span>' : ''}</h2>
+                                <p class="text-xs text-slate-400">Grupo ${u.group} | Inició con ${u.startWeight}kg</p>
                             </div>
                         </div>
-                        <div class="text-right flex flex-col items-end">
-                            <span class="text-2xl font-black text-blue-400 leading-none">${points}</span>
-                            <span class="text-[8px] text-slate-500 font-black uppercase mt-1">PTS</span>
+                        <div class="text-right">
+                            <div class="text-3xl font-black text-blue-400">${totalScore}</div>
+                            <div class="text-[10px] text-slate-500 uppercase font-bold tracking-wider">PUNTOS</div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3 mb-6">
+                        <div class="bg-slate-800/50 border border-slate-700 rounded-xl p-3 text-center">
+                            <i data-lucide="dumbbell" class="w-5 h-5 mx-auto text-emerald-400 mb-1"></i>
+                            <div class="text-sm font-bold text-emerald-400">${daysTrained} Días</div>
+                            <div class="text-[10px] text-slate-400 uppercase">Sudor (+${daysTrained} pts)</div>
+                        </div>
+                        <div class="bg-slate-800/50 border border-slate-700 rounded-xl p-3 text-center">
+                            <i data-lucide="beef" class="w-5 h-5 mx-auto text-amber-400 mb-1"></i>
+                            <div class="text-sm font-bold text-amber-400">${validMealsThisWeek}/5 Comidas</div>
+                            <div class="text-[10px] text-slate-400 uppercase">Rey Proteína (+${mealPoints} pts)</div>
+                        </div>
+                    </div>
+
+                    ${!trainedToday ? `
+                        <button onclick="window.triggerFileUpload('sudor', '${u.id}')" class="w-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white font-black py-5 rounded-2xl mb-6 shadow-[0_0_20px_rgba(225,29,72,0.4)] transition-all active:scale-95 flex flex-col items-center justify-center border border-red-400/30">
+                            <i data-lucide="camera" class="w-8 h-8 mb-1"></i>
+                            <span class="text-lg uppercase tracking-wider">Cámara Anti-Trampas</span>
+                            <span class="text-xs font-normal text-red-200 mt-1">Sube foto EN VIVO para ganar 1 punto hoy</span>
+                        </button>
+                    ` : `
+                        <div class="w-full bg-emerald-900/30 border border-emerald-500/50 text-emerald-400 font-bold py-4 rounded-2xl mb-6 flex flex-col items-center justify-center">
+                            <i data-lucide="check-circle-2" class="w-8 h-8 mb-1"></i>
+                            <span class="text-lg">¡Entrenamiento Validado!</span>
+                            <span class="text-xs font-normal text-emerald-500/70">Punto sumado. Regresa mañana.</span>
+                        </div>
+                    `}
+
+                    <div class="glass-panel rounded-2xl border border-slate-700 overflow-hidden mb-6">
+                        <div class="bg-slate-800/50 px-4 py-3 border-b border-slate-700 flex items-center gap-2">
+                            <i data-lucide="video" class="w-4 h-4 text-slate-400"></i>
+                            <h3 class="font-bold text-sm">Pruebas de Control (Fotos/Videos)</h3>
+                        </div>
+                        <div class="p-4 space-y-4">
+                            <div class="flex items-center justify-between p-3 bg-slate-900 rounded-xl border border-slate-800">
+                                <div>
+                                    <div class="text-sm font-bold">1. "Realidad"</div>
+                                    <div class="text-[10px] text-slate-500">Sin polo (Giro 360°)</div>
+                                    ${u.fotosControl && u.fotosControl.real ? `<div class="text-[10px] text-emerald-400 mt-1 flex items-center gap-1"><i data-lucide="check" class="w-3 h-3"></i> Subido: ${u.fotosControl.real}</div>` : ''}
+                                </div>
+                                <button onclick="window.triggerFileUpload('real', '${u.id}')" class="px-4 py-2 bg-slate-800 text-blue-400 text-xs font-bold rounded-lg border border-blue-500/30 flex items-center gap-2">
+                                    <i data-lucide="upload" class="w-4 h-4"></i> Galería
+                                </button>
+                            </div>
+                            <div class="flex items-center justify-between p-3 bg-slate-900 rounded-xl border border-slate-800">
+                                <div>
+                                    <div class="text-sm font-bold">2. "Ropa Control"</div>
+                                    <div class="text-[10px] text-slate-500">Prenda mal ajustada</div>
+                                    ${u.fotosControl && u.fotosControl.ropa ? `<div class="text-[10px] text-emerald-400 mt-1 flex items-center gap-1"><i data-lucide="check" class="w-3 h-3"></i> Subido: ${u.fotosControl.ropa}</div>` : ''}
+                                </div>
+                                <button onclick="window.triggerFileUpload('ropa', '${u.id}')" class="px-4 py-2 bg-slate-800 text-orange-400 text-xs font-bold rounded-lg border border-orange-500/30 flex items-center gap-2">
+                                    <i data-lucide="upload" class="w-4 h-4"></i> Galería
+                                </button>
+                            </div>
                         </div>
                     </div>
                 `;
-            });
-            html += `</div></div>`;
-            container.innerHTML = html;
-        }
 
-        function renderAdmin(container) {
-            let html = `
-                <div class="animate-fade-in pb-8">
-                    <button onclick="window.switchTab('home')" class="mb-4 flex items-center gap-2 text-sm text-slate-400 font-bold hover:text-white">
-                        <i data-lucide="arrow-left" class="w-4 h-4"></i> Volver
-                    </button>
-                    <h2 class="text-2xl font-black text-white mb-1 flex items-center gap-2">
-                        <i data-lucide="shield-check" class="w-6 h-6 text-amber-400"></i> Panel Supremo
-                    </h2>
-                    <p class="text-xs text-slate-400 mb-6">Gestión de participantes</p>
-
-                    <div class="space-y-3">
-            `;
-
-            window.appState.allUsers.forEach(user => {
-                const days = user.trainingDays ? user.trainingDays.length : 0;
-                html += `
-                    <div class="bg-slate-800/80 p-4 rounded-2xl flex flex-col border border-slate-600 gap-3">
-                        <div class="flex items-center justify-between">
-                            <div>
-                                <h3 class="font-bold text-white text-base">${user.name}</h3>
-                                <p class="text-[10px] text-slate-400 mt-1">PIN: <span class="text-amber-400 font-mono font-bold">${user.pin}</span> | Peso: ${user.startWeight} Kg</p>
+                if(window.isAdmin) {
+                    html += `
+                        <div class="mt-8 bg-slate-800 p-4 rounded-xl border border-amber-500/50 shadow-[0_0_15px_rgba(245,158,11,0.2)] pb-24">
+                            <h3 class="text-amber-400 font-bold mb-4 flex items-center gap-2">
+                                <i data-lucide="eye" class="w-5 h-5"></i> Panel Inspector (Ojo de Dios)
+                            </h3>
+                            <div id="admin-photos-container" class="text-sm text-slate-400">
+                                <i data-lucide="loader" class="w-4 h-4 animate-spin inline mr-2"></i> Obteniendo archivos reales de la base de datos...
                             </div>
-                            <span class="text-lg font-black text-slate-500 bg-slate-900 px-3 py-1 rounded-xl">${days} pts</span>
                         </div>
-                        <div class="flex gap-2 w-full mt-2 pt-3 border-t border-slate-700/50">
-                            <button onclick="window.openEditModal('${user.id}')" class="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2.5 rounded-xl text-xs font-bold flex justify-center items-center gap-1 transition-colors">
-                                <i data-lucide="edit-2" class="w-4 h-4"></i> Editar
-                            </button>
-                            <button onclick="window.deleteCompetitor('${user.id}')" class="flex-1 bg-red-600 hover:bg-red-500 text-white py-2.5 rounded-xl text-xs font-black flex justify-center items-center gap-1 shadow-lg shadow-red-900/50 transition-colors">
-                                <i data-lucide="trash-2" class="w-4 h-4"></i> Borrar
-                            </button>
+                    `;
+                    setTimeout(() => window.loadAdminPhotos(u.id), 100);
+                }
+            }
+
+            else if (window.appState.currentTab === 'retos') {
+                html += `
+                    <div class="mb-6">
+                        <h2 class="text-2xl font-black text-white uppercase flex items-center gap-2"><i data-lucide="swords" class="text-amber-500"></i> Retos Activos</h2>
+                    </div>
+
+                    <div class="glass-panel p-5 rounded-2xl border border-amber-500/30 mb-6 bg-gradient-to-br from-slate-900 to-slate-800 relative overflow-hidden">
+                        <div class="absolute top-0 right-0 p-4 opacity-10"><i data-lucide="beef" class="w-24 h-24 text-amber-500"></i></div>
+                        <h3 class="text-xl font-black text-amber-400 mb-2 relative z-10">El Rey de la Proteína 👑</h3>
+                        <p class="text-xs text-slate-300 relative z-10 mb-4 leading-relaxed">Sube 1 foto diaria de tu almuerzo. La comunidad votará. Si consigues <b>5 comidas validadas</b> de Lunes a Domingo, ganas <b class="text-emerald-400">+5 Puntos</b> directos.</p>
+                        ${window.appState.userData ? 
+                            `<button onclick="window.triggerFileUpload('comida', '${window.appState.userData.id}')" class="w-full bg-amber-600 hover:bg-amber-500 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-colors relative z-10">
+                                <i data-lucide="camera" class="w-5 h-5"></i> Subir Comida de Hoy (Cámara)
+                            </button>` : 
+                            `<div class="text-xs text-amber-500/70 border border-amber-500/30 p-2 rounded text-center">Inicia sesión en tu perfil para subir tu comida.</div>`
+                        }
+                    </div>
+
+                    <h3 class="font-bold text-lg mb-4 flex items-center gap-2"><i data-lucide="layout-grid" class="text-blue-400"></i> Muro de Comidas (Esta Semana)</h3>
+                    <div class="space-y-4 pb-24">
+                `;
+
+                const now = new Date();
+                const dayOfWeek = now.getDay() === 0 ? 6 : now.getDay() - 1; 
+                const mondayThisWeek = new Date(now);
+                mondayThisWeek.setDate(now.getDate() - dayOfWeek);
+                mondayThisWeek.setHours(0,0,0,0);
+
+                const mealsThisWeek = window.appState.meals.filter(m => m.timestamp >= mondayThisWeek.getTime());
+
+                if(mealsThisWeek.length === 0) {
+                    html += `<div class="text-center p-8 bg-slate-800/50 rounded-2xl border border-slate-700 text-slate-400 text-xs">Nadie ha subido su comida esta semana. ¡Sé el primero!</div>`;
+                }
+
+                mealsThisWeek.forEach(m => {
+                    const validada = m.votosSanos && m.votosTrampa && m.votosSanos.length > m.votosTrampa.length;
+                    const reprobada = m.votosSanos && m.votosTrampa && m.votosSanos.length < m.votosTrampa.length;
+                    let statusBadge = `<span class="bg-slate-700 text-slate-300 px-2 py-0.5 rounded text-[10px]">Pendiente</span>`;
+                    if(validada) statusBadge = `<span class="bg-emerald-900 text-emerald-400 px-2 py-0.5 rounded border border-emerald-500/30 text-[10px]">✅ Validada</span>`;
+                    if(reprobada) statusBadge = `<span class="bg-red-900 text-red-400 px-2 py-0.5 rounded border border-red-500/30 text-[10px]">❌ Trampa</span>`;
+
+                    html += `
+                        <div class="bg-slate-800 rounded-xl overflow-hidden border border-slate-700">
+                            <div class="p-3 flex justify-between items-center bg-slate-900">
+                                <div class="font-bold text-sm">${m.userName}</div>
+                                <div class="flex items-center gap-2">${statusBadge} <span class="text-[9px] text-slate-500">${m.fecha}</span></div>
+                            </div>
+                            <img src="${m.url}" class="w-full h-48 object-cover" loading="lazy">
+                            <div class="p-3 flex gap-2">
+                                <button onclick="window.votarComida('${m.id}', 'sano')" class="flex-1 py-2 bg-emerald-900/30 hover:bg-emerald-900/50 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-bold flex items-center justify-center gap-1">
+                                    <i data-lucide="thumbs-up" class="w-4 h-4"></i> Sano (${m.votosSanos ? m.votosSanos.length : 0})
+                                </button>
+                                <button onclick="window.votarComida('${m.id}', 'trampa')" class="flex-1 py-2 bg-red-900/30 hover:bg-red-900/50 text-red-400 border border-red-500/30 rounded-lg text-xs font-bold flex items-center justify-center gap-1">
+                                    <i data-lucide="thumbs-down" class="w-4 h-4"></i> Trampa (${m.votosTrampa ? m.votosTrampa.length : 0})
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                });
+                html += `</div>`;
+            }
+
+            else if (window.appState.currentTab === 'bases') {
+                html += `
+                    <div class="mb-6"><h2 class="text-2xl font-black text-white uppercase flex items-center gap-2"><i data-lucide="book-open" class="text-blue-500"></i> Bases Oficiales</h2></div>
+                    <div class="space-y-4 pb-24 text-sm text-slate-300 leading-relaxed">
+                        <div class="bg-slate-800 p-5 rounded-2xl border border-slate-700">
+                            <h3 class="text-white font-bold mb-2 flex items-center gap-2 text-lg"><i data-lucide="calendar" class="text-blue-400"></i> Duración</h3>
+                            <p>18 de Agosto al 29 de Octubre (73 Días).<br>Reunión Final: 30 de Octubre.</p>
+                        </div>
+                        <div class="bg-slate-800 p-5 rounded-2xl border border-slate-700">
+                            <h3 class="text-white font-bold mb-2 flex items-center gap-2 text-lg"><i data-lucide="camera" class="text-emerald-400"></i> 1. El Sudor Diario</h3>
+                            <p>1 punto por cada día validado con foto de esfuerzo <b>en vivo</b>. Prohibido usar galería.</p>
+                            <p class="mt-2 text-red-400 text-xs">Penalidad: El Auditor anula el día y resta -2 puntos si detecta foto falsa.</p>
+                        </div>
+                        <div class="bg-slate-800 p-5 rounded-2xl border border-slate-700">
+                            <h3 class="text-white font-bold mb-2 flex items-center gap-2 text-lg"><i data-lucide="scale" class="text-purple-400"></i> 2. Sistema de Peso Justo</h3>
+                            <p><b>Grupo A (Quemar) - PCP:</b></p>
+                            <ul class="list-disc pl-5 mb-2 text-xs space-y-1"><li>3% a 5% = 10 pts</li><li>5.1% a 8% = 15 pts</li><li>> 8% = 20 pts</li></ul>
+                            <p><b>Grupo B (Volumen) - PCP:</b></p>
+                            <ul class="list-disc pl-5 text-xs space-y-1"><li>2% a 4% = 15 pts</li><li>> 4% = 10 pts (Se penaliza exceso de grasa)</li></ul>
+                        </div>
+                        <div class="bg-slate-800 p-5 rounded-2xl border border-slate-700">
+                            <h3 class="text-white font-bold mb-2 flex items-center gap-2 text-lg"><i data-lucide="users" class="text-amber-400"></i> 3. La Votación Final</h3>
+                            <p>El 30 de Octubre se proyectan los videos de Control Inicial vs Final. Todos votan del 1 al 5 el cambio estético (Voto secreto, no a sí mismo).</p>
                         </div>
                     </div>
                 `;
-            });
+            }
 
-            html += `</div></div>`;
-            container.innerHTML = html;
-        }
+            else if (window.appState.currentTab === 'admin') {
+                html += `
+                    <div class="mb-6 flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <button onclick="window.switchTab('home')" class="p-2 bg-slate-800 rounded-full text-slate-400 hover:text-white"><i data-lucide="arrow-left" class="w-5 h-5"></i></button>
+                            <h2 class="text-xl font-bold text-amber-500 flex items-center gap-2"><i data-lucide="shield"></i> Admin Panel</h2>
+                        </div>
+                    </div>
+                    <div class="space-y-3 pb-24">
+                `;
+                window.appState.allUsers.forEach(user => {
+                    html += `
+                        <div class="bg-slate-800 p-4 rounded-xl border border-slate-700 flex justify-between items-center">
+                            <div>
+                                <div class="font-bold text-white">${user.name}</div>
+                                <div class="text-[10px] text-slate-400">PIN: ${user.pin} | Peso: ${user.startWeight}kg</div>
+                            </div>
+                            <div class="flex gap-2">
+                                <button onclick="window.openEditModal('${user.id}')" class="p-2 bg-blue-900/30 text-blue-400 rounded hover:bg-blue-900/50"><i data-lucide="pencil" class="w-4 h-4"></i></button>
+                                <button onclick="window.deleteCompetitor('${user.id}')" class="p-2 bg-red-900/30 text-red-400 rounded hover:bg-red-900/50"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                            </div>
+                        </div>
+                    `;
+                });
+                html += `</div>`;
+            }
 
-        setTimeout(renderApp, 100);
+            document.getElementById('app-content').innerHTML = html;
+            if(window.lucide) window.lucide.createIcons();
+        };
+
+        window.onload = function() {
+            window.renderApp();
+        };
     </script>
+
+    <div class="flex-1 overflow-y-auto p-6" id="app-content"></div>
+
+    <div class="bg-slate-900 border-t border-slate-800 px-6 py-4 flex justify-between items-center z-50 relative">
+        <button onclick="window.switchTab('home')" data-tab="home" class="nav-btn flex flex-col items-center gap-1 text-blue-500 transition-colors">
+            <i data-lucide="home" class="w-6 h-6"></i><span class="text-[10px] font-bold">Inicio</span>
+        </button>
+        <button onclick="window.switchTab('retos')" data-tab="retos" class="nav-btn flex flex-col items-center gap-1 text-slate-500 hover:text-slate-300 transition-colors">
+            <i data-lucide="swords" class="w-6 h-6"></i><span class="text-[10px] font-bold">Retos</span>
+        </button>
+        <button onclick="window.switchTab('bases')" data-tab="bases" class="nav-btn flex flex-col items-center gap-1 text-slate-500 hover:text-slate-300 transition-colors">
+            <i data-lucide="book-open" class="w-6 h-6"></i><span class="text-[10px] font-bold">Bases</span>
+        </button>
+        <button onclick="window.promptAdminPin()" class="flex flex-col items-center gap-1 text-slate-600 hover:text-amber-500 transition-colors">
+            <i data-lucide="settings" class="w-6 h-6"></i><span class="text-[10px] font-bold">Admin</span>
+        </button>
+    </div>
+
+    <!-- Modales -->
+    <div id="pin-modal" class="fixed inset-0 bg-slate-900/90 backdrop-blur-sm z-[200] hidden items-center justify-center p-4">
+        <div class="bg-slate-800 border border-slate-700 p-6 rounded-2xl w-full max-w-sm relative shadow-2xl">
+            <button onclick="window.closePinModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
+            <h3 id="pin-title" class="text-xl font-bold text-white mb-4 flex items-center gap-2"></h3>
+            <input type="number" id="login-pin" class="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-4 text-white text-2xl font-black tracking-[0.5em] text-center focus:border-blue-500 focus:outline-none mb-4" placeholder="****">
+            <button onclick="window.verifyPin()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-xl shadow-lg transition-colors">Ingresar</button>
+        </div>
+    </div>
+
+    <div id="edit-modal" class="fixed inset-0 bg-slate-900/90 backdrop-blur-sm z-[200] hidden items-center justify-center p-4">
+        <div class="bg-slate-800 border border-slate-700 p-6 rounded-2xl w-full max-w-sm relative shadow-2xl space-y-4">
+            <button onclick="window.closeEditModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
+            <h3 class="text-xl font-bold text-white mb-2">Editar Competidor</h3>
+            <div><label class="text-xs text-slate-400 block mb-1">Nombre</label><input type="text" id="edit-name" class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white"></div>
+            <div><label class="text-xs text-slate-400 block mb-1">Peso Inicial (kg)</label><input type="number" step="0.1" id="edit-weight" class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white"></div>
+            <div><label class="text-xs text-slate-400 block mb-1">PIN</label><input type="number" id="edit-pin" class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white"></div>
+            <button onclick="window.saveEditModal()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-xl mt-2">Guardar Cambios</button>
+        </div>
+    </div>
+
 </body>
 </html>
