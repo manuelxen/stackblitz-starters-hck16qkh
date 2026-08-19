@@ -50,9 +50,11 @@
             currentTab: 'home',
             allUsers: [],
             userData: null,
-            meals: [],
-            chatHistory: []
+            meals: []
         };
+
+        window.currentLoginUserId = null;
+        window.isAdmin = false;
 
         window.showToast = function(msg, type='success') {
             const toast = document.createElement('div');
@@ -83,85 +85,43 @@
                     btn.classList.add('text-slate-500');
                 }
             });
-            if(window.renderApp) window.renderApp();
-        };
-
-        window.currentLoginUserId = null;
-        window.isAdmin = false;
-        
-        window.askOracle = async function() {
-            const input = document.getElementById('oracle-input');
-            const text = input.value.trim();
-            if(!text) return;
-
-            input.value = '';
-
-            window.appState.chatHistory.push({ role: "user", text: text });
-            window.renderApp();
             
-            setTimeout(() => {
-                const chatBox = document.getElementById('chat-container');
-                if(chatBox) chatBox.scrollTop = chatBox.scrollHeight;
-            }, 50);
+            if(window.renderApp) window.renderApp();
 
-            const apiKey = ""; // IMPORTANTE: Agrega tu API Key de Gemini aquí para que la IA funcione
-            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
-
-            const payload = {
-                contents: window.appState.chatHistory.map(msg => ({
-                    role: msg.role === 'user' ? 'user' : 'model',
-                    parts: [{ text: msg.text }]
-                })),
-                systemInstruction: {
-                    parts: [{ text: "Eres Zeus, el Oráculo del Olimpo. Un entrenador fitness divino, rudo, sarcástico pero sabio y motivador. Estás entrenando a mortales para un reto llamado 'Ya no quiero estar como el chulo'. Tus respuestas son breves (1 a 3 oraciones máximo), directas, motivadoras y usas jerga de gimnasio combinada con mitología griega." }]
-                }
-            };
-
-            try {
-                window.appState.chatHistory.push({ role: "model", text: "..." });
-                window.renderApp();
-                
+            // Cargar fotos automáticamente si el admin entra al perfil
+            if (tabId === 'profile' && window.isAdmin && window.appState.userData) {
                 setTimeout(() => {
-                    const chatBox = document.getElementById('chat-container');
-                    if(chatBox) chatBox.scrollTop = chatBox.scrollHeight;
-                }, 50);
-
-                if(!apiKey) throw new Error("Sin API Key");
-
-                const response = await fetch(apiUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                
-                const result = await response.json();
-                const candidate = result.candidates?.[0];
-
-                window.appState.chatHistory.pop(); 
-
-                if (candidate && candidate.content?.parts?.[0]?.text) {
-                    window.appState.chatHistory.push({ role: "model", text: candidate.content.parts[0].text });
-                } else {
-                    window.appState.chatHistory.push({ role: "model", text: "Mis poderes divinos fallaron. Intenta de nuevo, mortal." });
-                }
-                window.renderApp();
-                
-                setTimeout(() => {
-                    const chatBox = document.getElementById('chat-container');
-                    if(chatBox) chatBox.scrollTop = chatBox.scrollHeight;
-                }, 50);
-
-            } catch (e) {
-                window.appState.chatHistory.pop();
-                window.appState.chatHistory.push({ role: "model", text: "Los truenos del Olimpo cortaron la señal o falta configurar la llave divina. Intenta otra vez." });
-                window.renderApp();
+                    window.loadAdminPhotos(window.appState.userData.id);
+                }, 100);
             }
         };
 
+        window.viewUserProfileAsAdmin = function(userId) {
+            window.isAdmin = true; // Forzar modo admin
+            window.switchTab('profile', userId); // Ir al perfil
+        };
+
         window.promptPin = function(userId) {
+            if (window.isAdmin) {
+                // Si el admin está activo y toca un usuario en inicio, lo deja pasar directo al perfil.
+                window.switchTab('profile', userId);
+                return;
+            }
+
             window.currentLoginUserId = userId;
             window.isAdmin = false;
             document.getElementById('pin-title').innerHTML = '<i data-lucide="lock" class="w-6 h-6 text-blue-500"></i> Clave de Acceso';
+            const modal = document.getElementById('pin-modal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            document.getElementById('login-pin').value = '';
+            setTimeout(() => document.getElementById('login-pin').focus(), 100);
+            if(window.lucide) window.lucide.createIcons();
+        };
+
+        window.promptAdminPin = function() {
+            window.currentLoginUserId = null;
+            document.getElementById('pin-title').innerHTML = '<i data-lucide="shield-alert" class="w-6 h-6 text-amber-500"></i> Acceso Admin';
             const modal = document.getElementById('pin-modal');
             modal.classList.remove('hidden');
             modal.classList.add('flex');
@@ -182,8 +142,8 @@
             // CLAVE ADMIN CONFIGURADA: 010402
             if(pin === '010402') { 
                 window.closePinModal();
+                window.isAdmin = true;
                 if(window.currentLoginUserId) {
-                    window.isAdmin = true;
                     window.switchTab('profile', window.currentLoginUserId);
                 } else {
                     window.switchTab('admin'); 
@@ -205,17 +165,6 @@
                 window.showToast("PIN Incorrecto.", "error");
                 document.getElementById('login-pin').value = '';
             }
-        };
-
-        window.promptAdminPin = function() {
-            window.currentLoginUserId = null;
-            document.getElementById('pin-title').innerHTML = '<i data-lucide="shield-alert" class="w-6 h-6 text-amber-500"></i> Acceso Admin';
-            const modal = document.getElementById('pin-modal');
-            modal.classList.remove('hidden');
-            modal.classList.add('flex');
-            document.getElementById('login-pin').value = '';
-            setTimeout(() => document.getElementById('login-pin').focus(), 100);
-            if(window.lucide) window.lucide.createIcons();
         };
     </script>
 
@@ -311,14 +260,14 @@
             const input = document.createElement('input');
             input.type = 'file';
             
-            // Lógica de formatos: Cámara vs Galería
+            // Lógica: Sudor obliga cámara en vivo. Realidad/Ropa permite subir videos de la galería.
             if(type === 'sudor') {
                 input.accept = 'image/*';
-                input.capture = 'environment'; // OBLIGA CÁMARA EN VIVO (Anti-trampa)
+                input.capture = 'environment'; // OBLIGA CÁMARA
             } else if (type === 'comida') {
-                input.accept = 'image/*'; // Permite galería para comida
+                input.accept = 'image/*'; // Permite galería
             } else {
-                input.accept = 'video/*, image/*'; // Permite galería para Realidad/Ropa
+                input.accept = 'video/*, image/*'; // Permite videos o fotos de la galería
             }
 
             input.onchange = async (e) => {
@@ -358,7 +307,7 @@
                         const photoRef = doc(window.db, `competitors/${userId}/fotos_control`, type);
                         await setDoc(photoRef, {
                             url: fileUrl,
-                            fecha: dateStr, // Guarda día y hora exacta
+                            fecha: dateStr, 
                             tipo: type,
                             tipoArch: tipoArch
                         });
@@ -383,7 +332,7 @@
                     }
                 } catch (error) {
                     console.error(error);
-                    window.showToast("Error subiendo. Asegúrate de haber habilitado Firebase Storage en Plan Blaze.", "error");
+                    window.showToast("Error subiendo el archivo. Asegúrate de tener espacio o Storage activado.", "error");
                 }
             };
             input.click();
@@ -456,33 +405,30 @@
             const container = document.getElementById('admin-photos-container');
             if(!container) return;
             try {
-                container.innerHTML = '<div class="text-center text-sm text-slate-400 py-4"><i data-lucide="loader-2" class="w-6 h-6 animate-spin mx-auto mb-2"></i> Cargando archivos...</div>';
-                if(window.lucide) window.lucide.createIcons();
-
                 let html = '<div class="space-y-4">';
                 
                 const controlSnap = await getDocs(collection(window.db, `competitors/${userId}/fotos_control`));
-                html += `<div><strong class="text-white text-xs">Pruebas de Control (Originales):</strong><div class="flex gap-2 overflow-x-auto mt-2 pb-2">`;
-                if(controlSnap.empty) html += `<span class="text-xs text-slate-500">Sin archivos de control</span>`;
+                html += `<div><strong class="text-amber-400 text-xs uppercase mb-1 block">Pruebas de Control (Archivos Reales):</strong><div class="flex gap-2 overflow-x-auto mt-2 pb-2">`;
+                if(controlSnap.empty) html += `<span class="text-xs text-slate-500">Sin archivos de control subidos.</span>`;
                 controlSnap.forEach(doc => {
                     const data = doc.data();
-                    html += `<div class="shrink-0 w-32 border border-slate-700 rounded p-1 bg-slate-900">
+                    html += `<div class="shrink-0 w-32 border border-slate-700 rounded p-1 bg-slate-900 shadow-md">
                       ${data.tipoArch === 'video' ? `<video src="${data.url}" controls class="w-full h-24 object-cover rounded mb-1"></video>` : `<img src="${data.url}" onclick="window.open('${data.url}')" class="w-full h-24 object-cover rounded mb-1 cursor-pointer">`}
-                      <div class="text-[10px] text-slate-300 text-center font-bold">${doc.id.toUpperCase()}</div>
-                      <div class="text-[9px] text-slate-500 text-center">${data.fecha}</div>
+                      <div class="text-[10px] text-amber-300 text-center font-bold uppercase">${doc.id}</div>
+                      <div class="text-[9px] text-slate-400 text-center">${data.fecha}</div>
                     </div>`;
                 });
                 html += `</div></div>`;
 
                 const sudorSnap = await getDocs(collection(window.db, `competitors/${userId}/fotos_sudor`));
-                html += `<div><strong class="text-white text-xs">Fotos de Sudor:</strong><div class="flex gap-2 overflow-x-auto mt-2 pb-2">`;
-                if(sudorSnap.empty) html += `<span class="text-xs text-slate-500">Sin archivos de sudor</span>`;
+                html += `<div><strong class="text-blue-400 text-xs uppercase mb-1 block">Fotos de Sudor Diario:</strong><div class="flex gap-2 overflow-x-auto mt-2 pb-2">`;
+                if(sudorSnap.empty) html += `<span class="text-xs text-slate-500">Sin fotos de sudor registradas.</span>`;
                 sudorSnap.forEach(doc => {
                     const data = doc.data();
-                    html += `<div class="shrink-0 w-32 border border-slate-700 rounded p-1 bg-slate-900">
-                      <img src="${data.url}" onclick="window.open('${data.url}')" class="w-full h-24 object-cover rounded mb-1 cursor-pointer">
-                      <div class="text-[10px] text-slate-300 text-center">${doc.id}</div>
-                      <div class="text-[9px] text-slate-500 text-center">${data.fecha}</div>
+                    html += `<div class="shrink-0 w-32 border border-slate-700 rounded p-1 bg-slate-900 shadow-md">
+                      ${data.tipoArch === 'video' ? `<video src="${data.url}" controls class="w-full h-24 object-cover rounded mb-1"></video>` : `<img src="${data.url}" onclick="window.open('${data.url}')" class="w-full h-24 object-cover rounded mb-1 cursor-pointer">`}
+                      <div class="text-[10px] text-blue-300 text-center font-bold">${doc.id}</div>
+                      <div class="text-[9px] text-slate-400 text-center">${data.fecha}</div>
                     </div>`;
                 });
                 html += `</div></div>`;
@@ -491,7 +437,7 @@
                 container.innerHTML = html;
             } catch(e) {
                 console.error(e);
-                container.innerHTML = '<span class="text-red-400 text-sm">Error cargando archivos.</span>';
+                container.innerHTML = '<span class="text-red-400 text-sm">Error cargando evidencias de Firebase.</span>';
             }
         };
 
@@ -585,9 +531,12 @@
                 const todayStr = today.toISOString().split('T')[0];
                 const trainedToday = user.trainingDays && user.trainingDays.includes(todayStr);
 
+                // Botón de volver inteligente (Al panel admin o a home)
+                const backTab = window.isAdmin ? 'admin' : 'home';
+
                 html += `
                     <div class="mb-6 pb-24">
-                        <button onclick="window.switchTab('home')" class="text-slate-400 mb-4 flex items-center gap-1 hover:text-white"><i data-lucide="arrow-left" class="w-4 h-4"></i> Volver</button>
+                        <button onclick="window.switchTab('${backTab}')" class="text-slate-400 mb-4 flex items-center gap-1 hover:text-white"><i data-lucide="arrow-left" class="w-4 h-4"></i> Volver</button>
                         
                         <div class="flex items-center gap-4 mb-6">
                             <div class="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-3xl font-black shadow-lg shadow-blue-900/50">
@@ -661,19 +610,19 @@
                             <div class="space-y-3">
                                 <div class="bg-slate-800 rounded-2xl p-4 border border-slate-700 flex justify-between items-center">
                                     <div>
-                                        <div class="font-bold">Video/Foto "Realidad"</div>
+                                        <div class="font-bold text-rose-400">Video "Realidad"</div>
                                         <div class="text-[10px] text-slate-400">Sin polo, giro 360°<br>${user.fotosControl?.real ? `Subido: ${user.fotosControl.real}` : 'Pendiente'}</div>
                                     </div>
-                                    <button onclick="window.triggerFileUpload('real', '${user.id}')" class="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 text-rose-400">
+                                    <button onclick="window.triggerFileUpload('real', '${user.id}')" class="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 text-rose-400 border border-slate-600 shadow-md">
                                         <i data-lucide="upload" class="w-4 h-4"></i> ${user.fotosControl?.real ? 'Cambiar' : 'Subir'}
                                     </button>
                                 </div>
                                 <div class="bg-slate-800 rounded-2xl p-4 border border-slate-700 flex justify-between items-center">
                                     <div>
-                                        <div class="font-bold">Video/Foto "Ropa Control"</div>
-                                        <div class="text-[10px] text-slate-400">Prenda que quede mal<br>${user.fotosControl?.ropa ? `Subido: ${user.fotosControl.ropa}` : 'Pendiente'}</div>
+                                        <div class="font-bold text-amber-400">Video "Ropa Control"</div>
+                                        <div class="text-[10px] text-slate-400">Prenda mal ajustada<br>${user.fotosControl?.ropa ? `Subido: ${user.fotosControl.ropa}` : 'Pendiente'}</div>
                                     </div>
-                                    <button onclick="window.triggerFileUpload('ropa', '${user.id}')" class="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 text-amber-400">
+                                    <button onclick="window.triggerFileUpload('ropa', '${user.id}')" class="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 text-amber-400 border border-slate-600 shadow-md">
                                         <i data-lucide="upload" class="w-4 h-4"></i> ${user.fotosControl?.ropa ? 'Cambiar' : 'Subir'}
                                     </button>
                                 </div>
@@ -683,10 +632,11 @@
                         ${window.isAdmin ? `
                             <div class="mt-8 border-t border-slate-700 pt-6">
                                 <h3 class="text-amber-500 font-bold mb-4 flex items-center gap-2"><i data-lucide="eye"></i> Vista Admin (Ojo de Dios)</h3>
-                                <div class="bg-slate-800 border border-amber-500/30 p-4 rounded-xl">
-                                    <p class="text-xs text-slate-400 mb-4">Has ingresado con la clave maestra. Aquí puedes ver y auditar los archivos que ha subido este usuario.</p>
-                                    <button onclick="window.loadAdminPhotos('${user.id}')" class="w-full bg-slate-700 hover:bg-slate-600 border border-slate-500 text-white py-3 rounded-lg text-sm mb-4 font-bold flex items-center justify-center gap-2 transition-colors"><i data-lucide="download-cloud" class="w-5 h-5"></i> Cargar Evidencias del Usuario</button>
-                                    <div id="admin-photos-container"></div>
+                                <div class="bg-slate-800 border border-amber-500/30 p-4 rounded-xl shadow-[0_0_15px_rgba(245,158,11,0.1)]">
+                                    <p class="text-xs text-slate-400 mb-2">Has ingresado con la clave maestra. Aquí cargan las evidencias reales del usuario.</p>
+                                    <div id="admin-photos-container">
+                                        <div class="text-center text-sm text-slate-400 py-4"><i data-lucide="loader-2" class="w-6 h-6 animate-spin mx-auto mb-2"></i> Cargando evidencias reales...</div>
+                                    </div>
                                 </div>
                             </div>
                         ` : ''}
@@ -751,48 +701,6 @@
                 html += `</div></div>`;
             }
 
-            else if (window.appState.currentTab === 'oraculo') {
-                html += `
-                    <div class="mb-6 flex flex-col h-[calc(100vh-140px)]">
-                        <h2 class="text-2xl font-black text-amber-400 uppercase flex items-center gap-2 mb-4">
-                            <i data-lucide="zap" class="text-amber-500"></i> El Oráculo
-                        </h2>
-                        <div class="bg-slate-800 p-4 rounded-xl border border-amber-500/30 text-xs text-slate-300 mb-4 shadow-[0_0_15px_rgba(245,158,11,0.1)]">
-                            Soy Zeus. Pregúntame sobre tus rutinas, dietas o pídeme motivación divina para no rendirte como un simple mortal.
-                        </div>
-                        
-                        <div id="chat-container" class="flex-1 overflow-y-auto space-y-4 mb-4 pr-2 pb-10">
-                `;
-                
-                window.appState.chatHistory.forEach(msg => {
-                    if(msg.role === 'user') {
-                        html += `<div class="flex justify-end"><div class="bg-blue-600 text-white p-3 rounded-2xl rounded-tr-none max-w-[85%] text-sm shadow-lg">${msg.text}</div></div>`;
-                    } else {
-                        const isTyping = msg.text === "...";
-                        html += `<div class="flex justify-start"><div class="bg-slate-800 border border-slate-700 text-slate-200 p-3 rounded-2xl rounded-tl-none max-w-[85%] text-sm flex items-start gap-2 shadow-lg">
-                            <i data-lucide="zap" class="w-4 h-4 text-amber-500 shrink-0 mt-0.5"></i>
-                            <div>${isTyping ? '<span class="animate-pulse">Canalizando el poder del Olimpo...</span>' : msg.text}</div>
-                        </div></div>`;
-                    }
-                });
-
-                if(window.appState.chatHistory.length === 0) {
-                    html += `<div class="text-center text-slate-500 mt-10"><i data-lucide="message-circle" class="w-12 h-12 mx-auto mb-2 opacity-30"></i><p>Haz tu consulta, espartano...</p></div>`;
-                }
-
-                html += `
-                        </div>
-                        
-                        <div class="flex gap-2 mt-auto relative z-10 bg-slate-900 pt-2">
-                            <input type="text" id="oracle-input" onkeypress="if(event.key === 'Enter') window.askOracle()" class="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:border-amber-500 focus:outline-none text-sm" placeholder="Ej. ¿Qué como para volumen?">
-                            <button onclick="window.askOracle()" class="bg-amber-600 hover:bg-amber-500 text-white p-3 rounded-xl transition-colors shadow-lg shadow-amber-900/50">
-                                <i data-lucide="send" class="w-5 h-5"></i>
-                            </button>
-                        </div>
-                    </div>
-                `;
-            }
-
             else if (window.appState.currentTab === 'bases') {
                 html += `
                     <div class="mb-6 pb-24 text-sm text-slate-300 leading-relaxed">
@@ -806,7 +714,7 @@
                                 <h3 class="text-emerald-400 font-bold text-lg mb-2 flex items-center gap-2"><i data-lucide="dumbbell" class="w-5 h-5"></i> 1. El Sudor Diario</h3>
                                 <ul class="list-disc pl-5 space-y-1">
                                     <li><strong>1 punto</strong> por día entrenado.</li>
-                                    <li>Mecánica: Grabar video/foto desde la app (Cámara en vivo).</li>
+                                    <li>Mecánica: Grabar video/foto desde la app (Cámara en vivo obligatoria).</li>
                                 </ul>
                             </section>
                             <section>
@@ -820,8 +728,8 @@
                             <section>
                                 <h3 class="text-purple-400 font-bold text-lg mb-2 flex items-center gap-2"><i data-lucide="camera" class="w-5 h-5"></i> 3. Métrica Visual</h3>
                                 <ul class="list-disc pl-5 space-y-1 text-xs">
-                                    <li><strong>Video/Foto Realidad:</strong> Sin polo, giro 360.</li>
-                                    <li><strong>Video/Foto Ropa Control:</strong> Prenda ajustada al inicio y final.</li>
+                                    <li><strong>Video Realidad:</strong> Sin polo, giro 360 (Se sube de galería).</li>
+                                    <li><strong>Video Ropa Control:</strong> Prenda ajustada al inicio y final (Se sube de galería).</li>
                                 </ul>
                             </section>
                         </div>
@@ -865,20 +773,29 @@
             else if (window.appState.currentTab === 'admin') {
                 html += `
                     <div class="mb-6 pb-24">
+                        <button onclick="window.switchTab('home')" class="text-slate-400 mb-4 flex items-center gap-1 hover:text-white"><i data-lucide="arrow-left" class="w-4 h-4"></i> Volver a Inicio</button>
                         <h2 class="text-2xl font-black text-amber-500 mb-6 flex items-center gap-2"><i data-lucide="shield-alert"></i> Panel Admin</h2>
                         <div class="space-y-3">
                 `;
                 
                 window.appState.allUsers.forEach(user => {
                     html += `
-                        <div class="bg-slate-800 border border-slate-700 p-4 rounded-xl flex justify-between items-center">
+                        <div class="bg-slate-800 border border-slate-700 p-4 rounded-xl flex justify-between items-center shadow-lg">
                             <div>
-                                <h3 class="font-bold">${user.name}</h3>
-                                <p class="text-xs text-slate-400">PIN: ${user.pin} | Peso: ${user.startWeight}kg</p>
+                                <h3 class="font-bold text-white">${user.name}</h3>
+                                <p class="text-[10px] text-slate-400 font-bold uppercase mt-1">PIN: <span class="text-amber-400">${user.pin}</span> | Peso: ${user.startWeight}kg</p>
                             </div>
                             <div class="flex gap-2">
-                                <button onclick="window.openEditModal('${user.id}')" class="bg-slate-700 hover:bg-slate-600 text-white p-2 rounded-lg"><i data-lucide="edit-2" class="w-4 h-4"></i></button>
-                                <button onclick="window.deleteCompetitor('${user.id}')" class="bg-red-900/50 hover:bg-red-800 text-red-400 p-2 rounded-lg"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                                <!-- NUEVO BOTÓN PARA AUDITAR PERFIL -->
+                                <button onclick="window.viewUserProfileAsAdmin('${user.id}')" class="bg-blue-900/50 border border-blue-500/30 hover:bg-blue-800 text-blue-400 p-2 rounded-lg transition" title="Ver Evidencias">
+                                    <i data-lucide="eye" class="w-4 h-4"></i>
+                                </button>
+                                <button onclick="window.openEditModal('${user.id}')" class="bg-slate-700 border border-slate-600 hover:bg-slate-600 text-white p-2 rounded-lg transition" title="Editar Info">
+                                    <i data-lucide="edit-2" class="w-4 h-4"></i>
+                                </button>
+                                <button onclick="window.deleteCompetitor('${user.id}')" class="bg-red-900/50 border border-red-500/30 hover:bg-red-800 text-red-400 p-2 rounded-lg transition" title="Eliminar Usuario">
+                                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                </button>
                             </div>
                         </div>
                     `;
@@ -904,9 +821,6 @@
         <button onclick="window.switchTab('retos')" data-tab="retos" class="nav-btn flex flex-col items-center gap-1 text-slate-500 hover:text-slate-300 transition-colors">
             <i data-lucide="swords" class="w-6 h-6"></i><span class="text-[10px] font-bold">Retos</span>
         </button>
-        <button onclick="window.switchTab('oraculo')" data-tab="oraculo" class="nav-btn flex flex-col items-center gap-1 text-slate-500 hover:text-amber-400 transition-colors">
-            <i data-lucide="zap" class="w-6 h-6"></i><span class="text-[10px] font-bold">Oráculo</span>
-        </button>
         <button onclick="window.switchTab('bases')" data-tab="bases" class="nav-btn flex flex-col items-center gap-1 text-slate-500 hover:text-slate-300 transition-colors">
             <i data-lucide="book-open" class="w-6 h-6"></i><span class="text-[10px] font-bold">Bases</span>
         </button>
@@ -915,6 +829,7 @@
         </button>
     </div>
 
+    <!-- Modales para PIN y Edición -->
     <div id="pin-modal" class="fixed inset-0 bg-slate-900/90 backdrop-blur-sm z-[200] hidden items-center justify-center p-4">
         <div class="bg-slate-800 border border-slate-700 p-6 rounded-2xl w-full max-w-sm relative shadow-2xl">
             <button onclick="window.closePinModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
