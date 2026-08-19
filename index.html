@@ -104,7 +104,7 @@
                 if(chatBox) chatBox.scrollTop = chatBox.scrollHeight;
             }, 50);
 
-            const apiKey = ""; 
+            const apiKey = ""; // IMPORTANTE: Agrega tu API Key de Gemini aquí para que la IA funcione
             const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
 
             const payload = {
@@ -113,7 +113,7 @@
                     parts: [{ text: msg.text }]
                 })),
                 systemInstruction: {
-                    parts: [{ text: "Eres Zeus, el Oráculo del Olimpo. Un entrenador fitness divino, rudo, sarcástico pero sabio y motivador. Estás entrenando a mortales para un reto llamado 'Ya no quiero estar como el chulo' (bajar grasa o ganar músculo). Tus respuestas son breves (1 a 3 oraciones máximo), directas, motivadoras y usas jerga de gimnasio combinada con mitología griega." }]
+                    parts: [{ text: "Eres Zeus, el Oráculo del Olimpo. Un entrenador fitness divino, rudo, sarcástico pero sabio y motivador. Estás entrenando a mortales para un reto llamado 'Ya no quiero estar como el chulo'. Tus respuestas son breves (1 a 3 oraciones máximo), directas, motivadoras y usas jerga de gimnasio combinada con mitología griega." }]
                 }
             };
 
@@ -125,6 +125,8 @@
                     const chatBox = document.getElementById('chat-container');
                     if(chatBox) chatBox.scrollTop = chatBox.scrollHeight;
                 }, 50);
+
+                if(!apiKey) throw new Error("Sin API Key");
 
                 const response = await fetch(apiUrl, {
                     method: 'POST',
@@ -151,7 +153,7 @@
 
             } catch (e) {
                 window.appState.chatHistory.pop();
-                window.appState.chatHistory.push({ role: "model", text: "Los truenos del Olimpo cortaron la señal. Intenta otra vez." });
+                window.appState.chatHistory.push({ role: "model", text: "Los truenos del Olimpo cortaron la señal o falta configurar la llave divina. Intenta otra vez." });
                 window.renderApp();
             }
         };
@@ -177,7 +179,7 @@
 
         window.verifyPin = function() {
             const pin = document.getElementById('login-pin').value;
-            // CLAVE ADMIN
+            // CLAVE ADMIN CONFIGURADA: 010402
             if(pin === '010402') { 
                 window.closePinModal();
                 if(window.currentLoginUserId) {
@@ -237,7 +239,7 @@
                 listenToMeals();
             } else {
                 signInAnonymously(auth).catch(error => {
-                    window.showToast("Debes habilitar Auth Anónimo en Firebase.", "error");
+                    window.showToast("Error de conexión con Firebase.", "error");
                 });
             }
         });
@@ -309,13 +311,14 @@
             const input = document.createElement('input');
             input.type = 'file';
             
+            // Lógica de formatos: Cámara vs Galería
             if(type === 'sudor') {
                 input.accept = 'image/*';
-                input.capture = 'environment'; // Camara obligatoria
+                input.capture = 'environment'; // OBLIGA CÁMARA EN VIVO (Anti-trampa)
             } else if (type === 'comida') {
-                input.accept = 'image/*'; // Camara o Galeria permitida
+                input.accept = 'image/*'; // Permite galería para comida
             } else {
-                input.accept = 'video/*, image/*'; // Galeria permitida para Realidad/Ropa
+                input.accept = 'video/*, image/*'; // Permite galería para Realidad/Ropa
             }
 
             input.onchange = async (e) => {
@@ -355,7 +358,7 @@
                         const photoRef = doc(window.db, `competitors/${userId}/fotos_control`, type);
                         await setDoc(photoRef, {
                             url: fileUrl,
-                            fecha: dateStr,
+                            fecha: dateStr, // Guarda día y hora exacta
                             tipo: type,
                             tipoArch: tipoArch
                         });
@@ -371,7 +374,7 @@
                             userId: userId,
                             userName: userName,
                             url: fileUrl,
-                            fecha: dateStr,
+                            fecha: dateStr, 
                             timestamp: Date.now(),
                             votosSanos: [],
                             votosTrampa: []
@@ -380,7 +383,7 @@
                     }
                 } catch (error) {
                     console.error(error);
-                    window.showToast("Error subiendo archivo. Asegura tu internet y el plan Blaze.", "error");
+                    window.showToast("Error subiendo. Asegúrate de haber habilitado Firebase Storage en Plan Blaze.", "error");
                 }
             };
             input.click();
@@ -403,7 +406,7 @@
         };
 
         window.deleteCompetitor = async function(userId) {
-            if(confirm("¿Seguro que deseas ELIMINAR a este competidor del Olimpo?")) {
+            if(confirm("¿Seguro que deseas ELIMINAR a este competidor?")) {
                 try {
                     await updateDoc(doc(window.db, 'competitors', userId), { deleted: true });
                     window.showToast("Competidor borrado.", "success");
@@ -445,7 +448,7 @@
                 window.closeEditModal();
                 window.switchTab('admin');
             } catch (error) {
-                window.showToast("Error actualizando datos.", "error");
+                window.showToast("Error actualizando.", "error");
             }
         };
 
@@ -453,15 +456,18 @@
             const container = document.getElementById('admin-photos-container');
             if(!container) return;
             try {
+                container.innerHTML = '<div class="text-center text-sm text-slate-400 py-4"><i data-lucide="loader-2" class="w-6 h-6 animate-spin mx-auto mb-2"></i> Cargando archivos...</div>';
+                if(window.lucide) window.lucide.createIcons();
+
                 let html = '<div class="space-y-4">';
                 
                 const controlSnap = await getDocs(collection(window.db, `competitors/${userId}/fotos_control`));
                 html += `<div><strong class="text-white text-xs">Pruebas de Control (Originales):</strong><div class="flex gap-2 overflow-x-auto mt-2 pb-2">`;
-                if(controlSnap.empty) html += `<span class="text-xs text-slate-500">Sin archivos</span>`;
+                if(controlSnap.empty) html += `<span class="text-xs text-slate-500">Sin archivos de control</span>`;
                 controlSnap.forEach(doc => {
                     const data = doc.data();
                     html += `<div class="shrink-0 w-32 border border-slate-700 rounded p-1 bg-slate-900">
-                      ${data.tipoArch === 'video' ? `<video src="${data.url}" controls class="w-full h-24 object-cover rounded mb-1"></video>` : `<img src="${data.url}" class="w-full h-24 object-cover rounded mb-1">`}
+                      ${data.tipoArch === 'video' ? `<video src="${data.url}" controls class="w-full h-24 object-cover rounded mb-1"></video>` : `<img src="${data.url}" onclick="window.open('${data.url}')" class="w-full h-24 object-cover rounded mb-1 cursor-pointer">`}
                       <div class="text-[10px] text-slate-300 text-center font-bold">${doc.id.toUpperCase()}</div>
                       <div class="text-[9px] text-slate-500 text-center">${data.fecha}</div>
                     </div>`;
@@ -470,11 +476,11 @@
 
                 const sudorSnap = await getDocs(collection(window.db, `competitors/${userId}/fotos_sudor`));
                 html += `<div><strong class="text-white text-xs">Fotos de Sudor:</strong><div class="flex gap-2 overflow-x-auto mt-2 pb-2">`;
-                if(sudorSnap.empty) html += `<span class="text-xs text-slate-500">Sin archivos</span>`;
+                if(sudorSnap.empty) html += `<span class="text-xs text-slate-500">Sin archivos de sudor</span>`;
                 sudorSnap.forEach(doc => {
                     const data = doc.data();
                     html += `<div class="shrink-0 w-32 border border-slate-700 rounded p-1 bg-slate-900">
-                      <img src="${data.url}" class="w-full h-24 object-cover rounded mb-1">
+                      <img src="${data.url}" onclick="window.open('${data.url}')" class="w-full h-24 object-cover rounded mb-1 cursor-pointer">
                       <div class="text-[10px] text-slate-300 text-center">${doc.id}</div>
                       <div class="text-[9px] text-slate-500 text-center">${data.fecha}</div>
                     </div>`;
@@ -485,7 +491,7 @@
                 container.innerHTML = html;
             } catch(e) {
                 console.error(e);
-                container.innerHTML = '<span class="text-red-400">Error cargando base de datos.</span>';
+                container.innerHTML = '<span class="text-red-400 text-sm">Error cargando archivos.</span>';
             }
         };
 
@@ -514,7 +520,7 @@
                     <div class="flex justify-between items-end mb-4">
                         <div>
                             <h2 class="text-xl font-bold">Competidores</h2>
-                            <p class="text-xs text-slate-400">Toca tu nombre para entrar y sudar</p>
+                            <p class="text-xs text-slate-400">Toca tu nombre para entrar</p>
                         </div>
                         <button onclick="window.switchTab('add-user')" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 shadow-lg shadow-blue-900/50 transition-colors">
                             <i data-lucide="user-plus" class="w-4 h-4"></i> Añadir
@@ -615,9 +621,9 @@
                         <div class="bg-slate-800 rounded-2xl p-5 mb-6 border border-slate-700 relative overflow-hidden">
                             <div class="absolute -right-4 -top-4 opacity-5"><i data-lucide="flame" class="w-32 h-32"></i></div>
                             <h3 class="font-bold mb-2 flex items-center gap-2"><i data-lucide="dumbbell" class="text-blue-500"></i> Tu Sudor de Hoy</h3>
-                            <p class="text-xs text-slate-400 mb-4">La constancia es la clave. Sube tu foto entrenando (Cámara en vivo, sin trampa).</p>
+                            <p class="text-xs text-slate-400 mb-4">Obligatorio usar cámara en vivo (Anti-Trampa).</p>
                             <button onclick="window.triggerFileUpload('sudor', '${user.id}')" class="w-full py-4 rounded-xl font-black text-lg flex items-center justify-center gap-2 transition-all ${trainedToday ? 'bg-emerald-600 text-white cursor-default' : 'bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-900/50'}">
-                                ${trainedToday ? '<i data-lucide="check-circle" class="w-6 h-6"></i> ¡Sudor Registrado Hoy!' : '<i data-lucide="camera" class="w-6 h-6"></i> Sudar Hoy (+1 Pt)'}
+                                ${trainedToday ? '<i data-lucide="check-circle" class="w-6 h-6"></i> ¡Sudor Registrado Hoy!' : '<i data-lucide="camera" class="w-6 h-6"></i> Grabar Sudor (+1 Pt)'}
                             </button>
                         </div>
 
@@ -655,20 +661,20 @@
                             <div class="space-y-3">
                                 <div class="bg-slate-800 rounded-2xl p-4 border border-slate-700 flex justify-between items-center">
                                     <div>
-                                        <div class="font-bold">Foto/Video "Realidad"</div>
-                                        <div class="text-[10px] text-slate-400">Sin polo, short (Frente, Perfil, Espalda)</div>
+                                        <div class="font-bold">Video/Foto "Realidad"</div>
+                                        <div class="text-[10px] text-slate-400">Sin polo, giro 360°<br>${user.fotosControl?.real ? `Subido: ${user.fotosControl.real}` : 'Pendiente'}</div>
                                     </div>
                                     <button onclick="window.triggerFileUpload('real', '${user.id}')" class="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 text-rose-400">
-                                        <i data-lucide="upload" class="w-4 h-4"></i> ${user.fotosControl?.real ? 'Actualizar' : 'Subir'}
+                                        <i data-lucide="upload" class="w-4 h-4"></i> ${user.fotosControl?.real ? 'Cambiar' : 'Subir'}
                                     </button>
                                 </div>
                                 <div class="bg-slate-800 rounded-2xl p-4 border border-slate-700 flex justify-between items-center">
                                     <div>
-                                        <div class="font-bold">Foto/Video "Ropa Control"</div>
-                                        <div class="text-[10px] text-slate-400">Polo y pantalón apretados o sueltos</div>
+                                        <div class="font-bold">Video/Foto "Ropa Control"</div>
+                                        <div class="text-[10px] text-slate-400">Prenda que quede mal<br>${user.fotosControl?.ropa ? `Subido: ${user.fotosControl.ropa}` : 'Pendiente'}</div>
                                     </div>
                                     <button onclick="window.triggerFileUpload('ropa', '${user.id}')" class="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 text-amber-400">
-                                        <i data-lucide="upload" class="w-4 h-4"></i> ${user.fotosControl?.ropa ? 'Actualizar' : 'Subir'}
+                                        <i data-lucide="upload" class="w-4 h-4"></i> ${user.fotosControl?.ropa ? 'Cambiar' : 'Subir'}
                                     </button>
                                 </div>
                             </div>
@@ -677,8 +683,11 @@
                         ${window.isAdmin ? `
                             <div class="mt-8 border-t border-slate-700 pt-6">
                                 <h3 class="text-amber-500 font-bold mb-4 flex items-center gap-2"><i data-lucide="eye"></i> Vista Admin (Ojo de Dios)</h3>
-                                <button onclick="window.loadAdminPhotos('${user.id}')" class="w-full bg-slate-800 border border-slate-600 text-white py-2 rounded-lg text-sm mb-4">Cargar Archivos Guardados</button>
-                                <div id="admin-photos-container"></div>
+                                <div class="bg-slate-800 border border-amber-500/30 p-4 rounded-xl">
+                                    <p class="text-xs text-slate-400 mb-4">Has ingresado con la clave maestra. Aquí puedes ver y auditar los archivos que ha subido este usuario.</p>
+                                    <button onclick="window.loadAdminPhotos('${user.id}')" class="w-full bg-slate-700 hover:bg-slate-600 border border-slate-500 text-white py-3 rounded-lg text-sm mb-4 font-bold flex items-center justify-center gap-2 transition-colors"><i data-lucide="download-cloud" class="w-5 h-5"></i> Cargar Evidencias del Usuario</button>
+                                    <div id="admin-photos-container"></div>
+                                </div>
                             </div>
                         ` : ''}
                     </div>
@@ -689,46 +698,50 @@
                 html += `
                     <div class="mb-6 pb-24">
                         <h2 class="text-2xl font-black text-amber-400 uppercase mb-2"><i data-lucide="swords" class="inline-block mr-2"></i> Retos Semanales</h2>
-                        <p class="text-sm text-slate-400 mb-6">Cumple los retos para sumar puntos extra al ranking final.</p>
+                        <p class="text-sm text-slate-400 mb-6">Cumple los retos para sumar puntos extra al ranking.</p>
 
                         <div class="bg-slate-800 rounded-2xl p-5 border border-amber-500/30 mb-6 relative overflow-hidden">
                             <div class="absolute -right-4 -top-4 opacity-10 text-amber-500"><i data-lucide="beef" class="w-32 h-32"></i></div>
                             <h3 class="text-xl font-bold text-amber-400 mb-2">El Rey de la Proteína</h3>
                             <p class="text-xs text-slate-300 mb-4 leading-relaxed">
-                                <strong>Regla:</strong> Sube una foto de tu almuerzo sano (buena proteína, verduras). Los demás votarán. Si consigues <strong>5 comidas aprobadas en la semana</strong>, ganas +5 puntos directos.
+                                <strong>Regla:</strong> Sube foto de tu almuerzo (buena proteína). Los demás votarán. Si consigues <strong>5 comidas sanas en la semana</strong>, ganas +5 puntos directos.
                             </p>
                             ${window.appState.userData ? `
                                 <button onclick="window.triggerFileUpload('comida', '${window.appState.userData.id}')" class="w-full bg-amber-600 hover:bg-amber-500 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 shadow-lg">
-                                    <i data-lucide="camera"></i> Subir Mi Almuerzo
+                                    <i data-lucide="upload"></i> Subir Mi Almuerzo de Hoy
                                 </button>
-                            ` : `<p class="text-xs text-red-400 italic font-bold text-center bg-red-900/20 p-2 rounded">Ingresa a tu perfil para subir tu comida.</p>`}
+                            ` : `<p class="text-xs text-red-400 italic font-bold text-center bg-red-900/20 p-2 rounded">Ingresa a tu perfil en Inicio para subir tu comida.</p>`}
                         </div>
 
-                        <h3 class="font-bold text-lg mb-4 text-white">Muro de Comidas (Esta Semana)</h3>
+                        <h3 class="font-bold text-lg mb-4 text-white flex items-center gap-2"><i data-lucide="layout-grid" class="w-5 h-5 text-blue-400"></i> Muro de Comidas</h3>
                         <div class="space-y-4">
                 `;
 
                 if(window.appState.meals.length === 0) {
-                    html += `<p class="text-center text-slate-500 text-sm py-8">Nadie ha subido su comida aún. ¡Sé el primero!</p>`;
+                    html += `<p class="text-center text-slate-500 text-sm py-8 border border-dashed border-slate-700 rounded-xl">Nadie ha subido su comida aún. ¡Sé el primero!</p>`;
                 }
 
                 window.appState.meals.forEach(meal => {
                     const sanos = meal.votosSanos ? meal.votosSanos.length : 0;
                     const trampa = meal.votosTrampa ? meal.votosTrampa.length : 0;
+                    const isSano = sanos > trampa;
                     
                     html += `
-                        <div class="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden shadow-lg">
+                        <div class="bg-slate-900 border ${isSano ? 'border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'border-slate-700'} rounded-xl overflow-hidden shadow-lg">
                             <div class="p-3 flex justify-between items-center border-b border-slate-800">
                                 <span class="font-bold text-blue-400 text-sm"><i data-lucide="user" class="w-4 h-4 inline pb-1"></i> ${meal.userName}</span>
                                 <span class="text-[10px] text-slate-500">${meal.fecha}</span>
                             </div>
-                            <img src="${meal.url}" class="w-full h-48 object-cover" alt="Comida">
+                            <div class="relative">
+                                <img src="${meal.url}" class="w-full h-48 object-cover" alt="Comida">
+                                ${isSano && sanos > 0 ? '<div class="absolute top-2 right-2 bg-emerald-500 text-white px-2 py-1 rounded text-xs font-bold shadow flex items-center gap-1"><i data-lucide="check" class="w-3 h-3"></i> Validada</div>' : ''}
+                            </div>
                             <div class="p-3 flex gap-2">
                                 <button onclick="window.votarComida('${meal.id}', 'sano')" class="flex-1 bg-emerald-900/30 border border-emerald-500/50 hover:bg-emerald-800/50 text-emerald-400 font-bold py-2 rounded-lg text-sm flex items-center justify-center gap-2 transition">
-                                    <i data-lucide="check-circle" class="w-4 h-4"></i> Sano (${sanos})
+                                    <i data-lucide="thumbs-up" class="w-4 h-4"></i> Sano (${sanos})
                                 </button>
                                 <button onclick="window.votarComida('${meal.id}', 'trampa')" class="flex-1 bg-red-900/30 border border-red-500/50 hover:bg-red-800/50 text-red-400 font-bold py-2 rounded-lg text-sm flex items-center justify-center gap-2 transition">
-                                    <i data-lucide="x-circle" class="w-4 h-4"></i> Trampa (${trampa})
+                                    <i data-lucide="thumbs-down" class="w-4 h-4"></i> Trampa (${trampa})
                                 </button>
                             </div>
                         </div>
@@ -784,50 +797,32 @@
                 html += `
                     <div class="mb-6 pb-24 text-sm text-slate-300 leading-relaxed">
                         <h2 class="text-2xl font-black text-white uppercase mb-6 border-b border-slate-700 pb-4">Bases del Reto</h2>
-                        
                         <div class="space-y-6">
                             <section>
                                 <h3 class="text-blue-400 font-bold text-lg mb-2 flex items-center gap-2"><i data-lucide="calendar" class="w-5 h-5"></i> Duración</h3>
                                 <p><strong>18 de Agosto al 29 de Octubre</strong> (Día 30: Reunión y Votación Final).</p>
                             </section>
-
                             <section>
                                 <h3 class="text-emerald-400 font-bold text-lg mb-2 flex items-center gap-2"><i data-lucide="dumbbell" class="w-5 h-5"></i> 1. El Sudor Diario</h3>
                                 <ul class="list-disc pl-5 space-y-1">
                                     <li><strong>1 punto</strong> por día entrenado.</li>
-                                    <li>Mecánica: Foto "en vivo" desde la app. Prohibido subir de galería.</li>
-                                    <li><strong class="text-red-400">Regla Anti-Trampa:</strong> El Día Final habrá Auditoría Cruzada (un compañero revisará tus fotos). Si se detecta fraude (foto repetida o falsa), pierdes 2 puntos.</li>
+                                    <li>Mecánica: Grabar video/foto desde la app (Cámara en vivo).</li>
                                 </ul>
                             </section>
-
                             <section>
                                 <h3 class="text-amber-400 font-bold text-lg mb-2 flex items-center gap-2"><i data-lucide="scale" class="w-5 h-5"></i> 2. Categorías y Peso Justo</h3>
                                 <p class="mb-2">Basado en el IMC (Índice de Masa Corporal):</p>
                                 <ul class="list-disc pl-5 space-y-2 mb-2">
-                                    <li><strong>Grupo A (Quema de grasa):</strong> IMC de sobrepeso o "flacos con panza".</li>
+                                    <li><strong>Grupo A (Quema de grasa):</strong> IMC de sobrepeso.</li>
                                     <li><strong>Grupo B (Volumen Limpio):</strong> IMC bajo o normal.</li>
                                 </ul>
-                                <div class="bg-slate-800 p-3 rounded-lg border border-slate-700 mt-3 text-xs">
-                                    <strong class="text-white">Puntos Grupo A (Bajar):</strong><br>
-                                    3% a 5% perdido = 10 pts | 5.1% a 8% = 15 pts | > 8% = 20 pts<br><br>
-                                    <strong class="text-white">Puntos Grupo B (Subir):</strong><br>
-                                    2% a 4% ganado = 15 pts | > 4% = 10 pts (volumen sucio penaliza).
-                                </div>
                             </section>
-
                             <section>
-                                <h3 class="text-purple-400 font-bold text-lg mb-2 flex items-center gap-2"><i data-lucide="camera" class="w-5 h-5"></i> 3. Métrica Visual (6 Archivos)</h3>
-                                <p class="mb-2">El peso engaña. Se graban al inicio y al final:</p>
+                                <h3 class="text-purple-400 font-bold text-lg mb-2 flex items-center gap-2"><i data-lucide="camera" class="w-5 h-5"></i> 3. Métrica Visual</h3>
                                 <ul class="list-disc pl-5 space-y-1 text-xs">
-                                    <li><strong>Set 1 "Realidad":</strong> Sin polo/short. (Frente, Perfil, Espalda).</li>
-                                    <li><strong>Set 2 "Prenda Control":</strong> Una prenda que te quede mal hoy. Úsala al final. (Frente, Perfil, Espalda).</li>
+                                    <li><strong>Video/Foto Realidad:</strong> Sin polo, giro 360.</li>
+                                    <li><strong>Video/Foto Ropa Control:</strong> Prenda ajustada al inicio y final.</li>
                                 </ul>
-                            </section>
-
-                            <section>
-                                <h3 class="text-rose-400 font-bold text-lg mb-2 flex items-center gap-2"><i data-lucide="trophy" class="w-5 h-5"></i> 4. La Gran Final</h3>
-                                <p>Suma total: <strong>Constancia + Peso Justo + Votación Estética (1 al 5) de los compañeros.</strong></p>
-                                <p class="mt-2 text-red-400 font-bold">💀 Los últimos 2 puestos pagarán la penitencia acordada.</p>
                             </section>
                         </div>
                     </div>
@@ -857,7 +852,7 @@
                             <div class="pt-2">
                                 <label class="text-xs font-bold text-amber-400 uppercase block mb-2"><i data-lucide="lock" class="w-3 h-3 inline"></i> PIN de Seguridad (4 dígitos)</label>
                                 <input type="number" id="reg-pin" class="w-full bg-slate-800 border border-amber-500/50 rounded-xl px-4 py-3 text-white focus:border-amber-500 focus:outline-none text-center tracking-widest text-lg font-bold" placeholder="****">
-                                <p class="text-[10px] text-slate-500 mt-1">Crea una clave que no olvides para que nadie entre a tu perfil.</p>
+                                <p class="text-[10px] text-slate-500 mt-1">Crea una clave que no olvides.</p>
                             </div>
                             <button onclick="window.processRegistration()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-4 rounded-xl mt-6 shadow-lg shadow-blue-900/50 transition-colors">
                                 Inscribir en el Olimpo
@@ -910,7 +905,7 @@
             <i data-lucide="swords" class="w-6 h-6"></i><span class="text-[10px] font-bold">Retos</span>
         </button>
         <button onclick="window.switchTab('oraculo')" data-tab="oraculo" class="nav-btn flex flex-col items-center gap-1 text-slate-500 hover:text-amber-400 transition-colors">
-            <i data-lucide="zap" class="w-6 h-6"></i><span class="text-[10px] font-bold">Oráculo IA</span>
+            <i data-lucide="zap" class="w-6 h-6"></i><span class="text-[10px] font-bold">Oráculo</span>
         </button>
         <button onclick="window.switchTab('bases')" data-tab="bases" class="nav-btn flex flex-col items-center gap-1 text-slate-500 hover:text-slate-300 transition-colors">
             <i data-lucide="book-open" class="w-6 h-6"></i><span class="text-[10px] font-bold">Bases</span>
@@ -920,7 +915,6 @@
         </button>
     </div>
 
-    <!-- Modales -->
     <div id="pin-modal" class="fixed inset-0 bg-slate-900/90 backdrop-blur-sm z-[200] hidden items-center justify-center p-4">
         <div class="bg-slate-800 border border-slate-700 p-6 rounded-2xl w-full max-w-sm relative shadow-2xl">
             <button onclick="window.closePinModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
