@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="es">
-<head> 
+<head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Reto: Ya no quiero estar como el chulo</title>
@@ -33,7 +33,7 @@
 <body class="h-screen w-screen overflow-hidden flex flex-col">
 
     <script>
-        // Tu configuración de Firebase
+        // Configuración de Firebase (Tu llave real)
         window.firebaseConfig = {
           apiKey: "AIzaSyA5N0yQQfPDfLKCkEbzUPHMMU-IJc6hCdA",
           authDomain: "app-de-ejercicio-a99db.firebaseapp.com",
@@ -88,7 +88,7 @@
 
         window.currentLoginUserId = null;
 
-        // Modales de Seguridad
+        // Modales de Seguridad y PIN
         window.promptPin = function(userId) {
             window.currentLoginUserId = userId;
             const modal = document.getElementById('pin-modal');
@@ -134,7 +134,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
-        import { getFirestore, collection, doc, setDoc, onSnapshot, updateDoc, deleteDoc, arrayUnion } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+        import { getFirestore, collection, doc, setDoc, onSnapshot, updateDoc } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 
         const app = initializeApp(window.firebaseConfig);
@@ -148,7 +148,7 @@
             } else {
                 signInAnonymously(auth).catch(error => {
                     console.error("Auth error", error);
-                    window.showToast("Error de conexión. Verifica Auth Anónimo en Firebase.", "error");
+                    window.showToast("Error de conexión a la base de datos.", "error");
                 });
             }
         });
@@ -158,7 +158,10 @@
             onSnapshot(competitorsRef, (snapshot) => {
                 const users = [];
                 snapshot.forEach(doc => {
-                    users.push({ id: doc.id, ...doc.data() });
+                    const data = doc.data();
+                    if(!data.deleted) { // Ignorar los eliminados suavemente
+                        users.push({ id: doc.id, ...data });
+                    }
                 });
                 window.appState.allUsers = users;
                 
@@ -195,6 +198,7 @@
                 pin: pin.toString(),
                 trainingDays: [],
                 videos: { real: false, ropa: false },
+                deleted: false,
                 createdAt: new Date().toISOString()
             };
 
@@ -208,7 +212,7 @@
             }
         };
 
-        // Lógica de Webcam en Vivo para evitar galerías
+        // Lógica de Webcam en Vivo para el Entrenamiento Diario (ANTI-TRAMPAS)
         let activeCameraCallback = null;
 
         window.openWebcamModal = function(callback) {
@@ -226,7 +230,7 @@
                 })
                 .catch(err => {
                     console.error("Webcam error:", err);
-                    window.showToast("Debes dar permiso de cámara para participar.", "error");
+                    window.showToast("Debes dar permiso de cámara para el registro diario.", "error");
                     window.closeWebcamModal();
                 });
         };
@@ -252,22 +256,19 @@
             }, 800);
         };
 
-        window.handleLiveCapture = function(type, userId) {
+        window.handleLiveCapture = function(userId) {
             window.openWebcamModal(async () => {
                 try {
                     const userRef = doc(window.db, 'competitors', userId);
-                    if (type === 'daily') {
-                        const todayStr = new Date().toISOString().split('T')[0];
-                        const user = window.appState.allUsers.find(u => u.id === userId);
-                        if(user.trainingDays && user.trainingDays.includes(todayStr)) {
-                            return window.showToast("Ya registraste tu entreno hoy.", "error");
-                        }
-                        await updateDoc(userRef, { trainingDays: arrayUnion(todayStr) });
-                        window.showToast("¡Día Registrado! +1 Punto 🔥", "success");
-                    } else if (type === 'real' || type === 'ropa') {
-                        await updateDoc(userRef, { [`videos.${type}`]: true });
-                        window.showToast("¡Evidencia Guardada! 📸", "success");
+                    const todayStr = new Date().toISOString().split('T')[0];
+                    const user = window.appState.allUsers.find(u => u.id === userId);
+                    if(user.trainingDays && user.trainingDays.includes(todayStr)) {
+                        return window.showToast("Ya registraste tu entreno hoy.", "error");
                     }
+                    // Usando un enfoque más directo en lugar de arrayUnion para evitar problemas de importación
+                    const newDays = user.trainingDays ? [...user.trainingDays, todayStr] : [todayStr];
+                    await updateDoc(userRef, { trainingDays: newDays });
+                    window.showToast("¡Día Registrado! +1 Punto 🔥", "success");
                 } catch (error) {
                     console.error("Save error", error);
                     window.showToast("Error de conexión.", "error");
@@ -275,13 +276,34 @@
             });
         };
 
-        // Panel Administrador (Edición y Borrado Real)
+        // ACCESO A GALERÍA: Para videos de control (Realidad y Ropa)
+        window.handleGalleryUpload = async function(type, userId) {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'video/*,image/*'; // Sin el atributo "capture" esto abre la galería
+            
+            input.onchange = async (e) => {
+                const file = e.target.files[0];
+                if(file) {
+                    window.showToast("Subiendo archivo desde la galería... ⏳", "success");
+                    try {
+                        const userRef = doc(window.db, 'competitors', userId);
+                        await updateDoc(userRef, { [`videos.${type}`]: true });
+                        window.showToast("¡Archivo subido exitosamente! 📸", "success");
+                    } catch(err) {
+                        window.showToast("Error al guardar archivo.", "error");
+                    }
+                }
+            };
+            input.click();
+        };
+
+        // Panel Administrador (Borrado Suave y Edición)
         window.deleteCompetitor = async function(userId) {
             if(confirm("¿Seguro que deseas ELIMINAR a este competidor del Olimpo?")) {
                 try {
-                    await deleteDoc(doc(window.db, 'competitors', userId));
-                    window.appState.allUsers = window.appState.allUsers.filter(u => u.id !== userId);
-                    window.renderApp(); 
+                    const userRef = doc(window.db, 'competitors', userId);
+                    await updateDoc(userRef, { deleted: true }); // Soft delete
                     window.showToast("Competidor borrado exitosamente.", "success");
                 } catch(e) {
                     console.error("Error deleting", e);
@@ -350,13 +372,14 @@
         <!-- Injected by JavaScript -->
     </main>
 
+    <!-- Modal PIN -->
     <div id="pin-modal" class="fixed inset-0 bg-slate-900/95 backdrop-blur-md z-50 hidden flex-col items-center justify-center p-4">
         <div class="bg-slate-800 p-6 rounded-3xl w-full max-w-sm border border-slate-700 shadow-2xl animate-fade-in relative overflow-hidden">
             <div class="absolute top-0 left-0 w-full h-1 bg-blue-500"></div>
             <h3 class="text-2xl font-black text-white mb-1 text-center mt-2 flex items-center justify-center gap-2">
                 <i data-lucide="lock" class="w-6 h-6 text-blue-500"></i> Clave de Acceso
             </h3>
-            <p class="text-sm text-slate-400 text-center mb-6">Ingresa el PIN.</p>
+            <p class="text-sm text-slate-400 text-center mb-6">Ingresa tu PIN de 4 dígitos (13579 para Admin).</p>
             <div class="flex justify-center mb-6">
                 <input type="password" id="login-pin" inputmode="numeric" maxlength="5" class="w-44 bg-slate-900/80 border border-slate-600 text-white text-center text-3xl font-black rounded-2xl px-4 py-3 focus:outline-none focus:border-blue-500 tracking-[0.4em] shadow-inner" placeholder="••••">
             </div>
@@ -367,12 +390,13 @@
         </div>
     </div>
 
+    <!-- Modal Webcam Anti-Trampas (Solo Entrenamiento Diario) -->
     <div id="webcam-modal" class="fixed inset-0 bg-slate-900/95 backdrop-blur-md z-50 hidden flex-col items-center justify-center p-4">
         <div class="bg-slate-800 p-4 rounded-3xl w-full max-w-md border border-slate-700 shadow-2xl animate-fade-in flex flex-col items-center">
             <h3 class="text-lg font-black text-white mb-2 flex items-center gap-2">
                 <i data-lucide="camera" class="w-5 h-5 text-emerald-400"></i> Cámara Anti-Trampas
             </h3>
-            <p class="text-xs text-red-400 mb-4 text-center font-bold">La galería está bloqueada. Demuestra que estás sudando AHORA.</p>
+            <p class="text-xs text-red-400 mb-4 text-center font-bold">Demuestra que estás sudando hoy en vivo.</p>
             <div class="w-full h-72 bg-black rounded-2xl overflow-hidden relative border border-slate-700 mb-4 flex items-center justify-center">
                 <video id="webcam-video" autoplay playsinline class="w-full h-full object-cover"></video>
             </div>
@@ -385,6 +409,7 @@
         </div>
     </div>
 
+    <!-- Modal Editar Admin -->
     <div id="edit-modal" class="fixed inset-0 bg-slate-900/95 backdrop-blur-md z-50 hidden flex-col items-center justify-center p-4">
         <div class="bg-slate-800 p-6 rounded-3xl w-full max-w-sm border border-slate-700 shadow-2xl animate-fade-in">
             <h3 class="text-xl font-black text-white mb-4 flex items-center gap-2">
@@ -412,19 +437,19 @@
     </div>
 
     <nav class="bg-slate-900 border-t border-slate-800 absolute bottom-0 w-full flex justify-around p-2 pb-safe z-10 flex-shrink-0">
-        <button onclick="window.switchTab('home')" class="nav-btn flex flex-col items-center p-2 text-blue-500 transition-colors w-1/4" data-tab="home">
+        <button onclick="window.switchTab('home')" class="nav-btn flex flex-col items-center p-2 text-blue-500 transition-colors w-1/5" data-tab="home">
             <i data-lucide="users" class="w-5 h-5"></i>
             <span class="text-[9px] mt-1 font-bold">Inicio</span>
         </button>
-        <button onclick="window.switchTab('bases')" class="nav-btn flex flex-col items-center p-2 text-slate-500 transition-colors w-1/4" data-tab="bases">
+        <button onclick="window.switchTab('bases')" class="nav-btn flex flex-col items-center p-2 text-slate-500 transition-colors w-1/5" data-tab="bases">
             <i data-lucide="book-open" class="w-5 h-5"></i>
             <span class="text-[9px] mt-1 font-bold">Bases</span>
         </button>
-        <button onclick="window.switchTab('retos')" class="nav-btn flex flex-col items-center p-2 text-slate-500 transition-colors w-1/4" data-tab="retos">
+        <button onclick="window.switchTab('retos')" class="nav-btn flex flex-col items-center p-2 text-slate-500 transition-colors w-1/5" data-tab="retos">
             <i data-lucide="flame" class="w-5 h-5"></i>
             <span class="text-[9px] mt-1 font-bold">Retos</span>
         </button>
-        <button onclick="window.switchTab('ranking')" class="nav-btn flex flex-col items-center p-2 text-slate-500 transition-colors w-1/4" data-tab="ranking">
+        <button onclick="window.switchTab('ranking')" class="nav-btn flex flex-col items-center p-2 text-slate-500 transition-colors w-1/5" data-tab="ranking">
             <i data-lucide="trophy" class="w-5 h-5"></i>
             <span class="text-[9px] mt-1 font-bold">Ranking</span>
         </button>
@@ -458,7 +483,7 @@
                             <h2 class="text-2xl font-black text-white">Competidores</h2>
                             <p class="text-xs text-slate-400">Toca tu nombre para entrar y sudar</p>
                         </div>
-                        <button onclick="window.switchTab('onboarding')" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl shadow-lg flex items-center gap-2 font-bold text-sm">
+                        <button onclick="window.switchTab('onboarding')" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl shadow-lg flex items-center gap-2 font-bold text-sm transition-colors">
                             <i data-lucide="user-plus" class="w-4 h-4"></i> Añadir
                         </button>
                     </div>
@@ -478,7 +503,8 @@
                 html += `<div class="grid grid-cols-1 gap-3">`;
                 window.appState.allUsers.forEach(user => {
                     const days = user.trainingDays ? user.trainingDays.length : 0;
-                    const imcColor = user.group.includes('A') ? 'text-red-400' : 'text-emerald-400';
+                    const imcColor = user.group.includes('A') ? 'text-blue-400' : 'text-emerald-400';
+                    const groupLabel = user.group.includes('A') ? 'Gpo A' : 'Gpo B';
                     
                     html += `
                         <div onclick="window.promptPin('${user.id}')" class="glass-panel p-4 rounded-2xl flex items-center justify-between cursor-pointer border border-slate-700/50 hover:border-blue-500 transition-colors">
@@ -489,13 +515,13 @@
                                 <div>
                                     <h3 class="font-bold text-lg text-white leading-none">${user.name}</h3>
                                     <div class="flex gap-2 mt-2">
-                                        <span class="text-[9px] bg-blue-900/40 border border-blue-500/30 px-2 py-0.5 rounded text-blue-300 font-bold">Gpo ${user.group.charAt(0)}</span>
-                                        <span class="text-[9px] bg-slate-800 border border-slate-600 px-2 py-0.5 rounded ${imcColor} font-bold">IMC ${user.imc}</span>
+                                        <span class="text-[9px] bg-blue-900/40 border border-blue-500/30 px-2 py-0.5 rounded ${imcColor} font-bold tracking-wider">${groupLabel}</span>
+                                        <span class="text-[9px] bg-slate-800 border border-slate-600 px-2 py-0.5 rounded text-slate-300 font-bold tracking-wider">IMC ${user.imc}</span>
                                     </div>
                                 </div>
                             </div>
                             <div class="text-right flex flex-col items-end">
-                                <div class="font-black text-2xl text-white leading-none">${days}</div>
+                                <div class="font-black text-3xl text-white leading-none drop-shadow-md">${days}</div>
                                 <div class="text-[8px] uppercase font-black tracking-widest text-slate-500 mt-1">Pts</div>
                             </div>
                         </div>
@@ -510,7 +536,7 @@
             container.innerHTML = `
                 <div class="glass-panel p-6 rounded-2xl animate-fade-in border border-slate-700/50">
                     <div class="flex justify-between items-center mb-6">
-                        <button onclick="window.switchTab('home')" class="text-slate-400 hover:text-white bg-slate-800 p-2 rounded-full">
+                        <button onclick="window.switchTab('home')" class="text-slate-400 hover:text-white bg-slate-800 p-2 rounded-full transition-colors">
                             <i data-lucide="arrow-left" class="w-5 h-5"></i>
                         </button>
                         <h2 class="text-xl font-black text-white">Nuevo Competidor</h2>
@@ -520,26 +546,27 @@
                     <div class="space-y-4">
                         <div>
                             <label class="block text-xs font-bold text-slate-400 uppercase mb-2">Nombre o Apodo</label>
-                            <input type="text" id="reg-name" placeholder="Ej: Manuel..." class="w-full bg-slate-900/50 border border-slate-700 text-white rounded-xl px-4 py-3 focus:outline-none focus:border-blue-500">
+                            <input type="text" id="reg-name" placeholder="Ej: Manuel..." class="w-full bg-slate-900 border border-slate-700 text-white rounded-xl px-4 py-3 focus:outline-none focus:border-blue-500">
                         </div>
                         <div class="grid grid-cols-2 gap-4">
                             <div>
                                 <label class="block text-xs font-bold text-slate-400 uppercase mb-2">Peso (Kg)</label>
-                                <input type="number" id="reg-weight" step="0.1" placeholder="Ej: 85.5" class="w-full bg-slate-900/50 border border-slate-700 text-white rounded-xl px-4 py-3 focus:outline-none focus:border-blue-500">
+                                <input type="number" id="reg-weight" step="0.1" placeholder="Ej: 85.5" class="w-full bg-slate-900 border border-slate-700 text-white rounded-xl px-4 py-3 focus:outline-none focus:border-blue-500">
                             </div>
                             <div>
                                 <label class="block text-xs font-bold text-slate-400 uppercase mb-2">Altura (Metros)</label>
-                                <input type="number" id="reg-height" step="0.01" placeholder="Ej: 1.75" class="w-full bg-slate-900/50 border border-slate-700 text-white rounded-xl px-4 py-3 focus:outline-none focus:border-blue-500">
+                                <input type="number" id="reg-height" step="0.01" placeholder="Ej: 1.75" class="w-full bg-slate-900 border border-slate-700 text-white rounded-xl px-4 py-3 focus:outline-none focus:border-blue-500">
                             </div>
                         </div>
                         <div>
                             <label class="block text-xs font-bold text-slate-400 uppercase mb-2 flex items-center gap-1">
-                                <i data-lucide="shield" class="w-3 h-3 text-blue-400"></i> PIN (4 Dígitos)
+                                <i data-lucide="shield" class="w-3 h-3 text-amber-500"></i> PIN de Seguridad (4 Dígitos)
                             </label>
-                            <input type="password" id="reg-pin" inputmode="numeric" maxlength="4" placeholder="••••" class="w-full bg-slate-900/80 border border-slate-700 text-white rounded-xl px-4 py-3 text-center text-xl tracking-[0.5em] font-black focus:outline-none focus:border-blue-500">
+                            <input type="password" id="reg-pin" inputmode="numeric" maxlength="4" placeholder="••••" class="w-full bg-slate-900/80 border border-slate-700 text-amber-400 rounded-xl px-4 py-3 text-center text-2xl tracking-[0.5em] font-black focus:outline-none focus:border-amber-500 shadow-inner">
+                            <p class="text-[9px] text-slate-500 mt-2 text-center">Nadie podrá ver tu perfil sin este PIN.</p>
                         </div>
                     </div>
-                    <button onclick="window.processRegistration()" class="w-full bg-blue-600 text-white font-bold py-4 rounded-xl mt-8 shadow-lg shadow-blue-900/50 flex justify-center items-center gap-2 text-lg">
+                    <button onclick="window.processRegistration()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl mt-8 shadow-lg shadow-blue-900/50 flex justify-center items-center gap-2 text-lg transition-all">
                         Inscribirse al Reto
                     </button>
                 </div>
@@ -554,7 +581,7 @@
             const videoRopaDone = user.videos && user.videos.ropa;
             const points = user.trainingDays ? user.trainingDays.length : 0;
 
-            const year = 2026;
+            const year = window.TODAY.getFullYear();
             const month = window.TODAY.getMonth();
             const daysInMonth = new Date(year, month + 1, 0).getDate();
             const firstDayIndex = new Date(year, month, 1).getDay();
@@ -579,7 +606,7 @@
                 calendarGridHtml += `
                     <div class="h-10 rounded-xl flex flex-col items-center justify-center text-xs font-bold relative border ${trained ? 'bg-blue-600 border-blue-400 text-white shadow-lg' : 'bg-slate-900/40 border-slate-800 text-slate-400'}">
                         <span>${day}</span>
-                        ${trained ? '<span class="absolute -bottom-1 -right-1 text-sm drop-shadow-md">🏋️</span>' : ''}
+                        ${trained ? '<span class="absolute -bottom-2 -right-1 text-sm drop-shadow-md">🏋️</span>' : ''}
                     </div>
                 `;
             }
@@ -588,7 +615,7 @@
 
             container.innerHTML = `
                 <div class="animate-fade-in pb-8">
-                    <button onclick="window.switchTab('home')" class="mb-4 flex items-center gap-2 text-sm text-slate-400 font-bold hover:text-white">
+                    <button onclick="window.switchTab('home')" class="mb-4 flex items-center gap-2 text-sm text-slate-400 font-bold hover:text-white transition-colors">
                         <i data-lucide="arrow-left" class="w-4 h-4"></i> Volver
                     </button>
 
@@ -597,135 +624,55 @@
                             <div>
                                 <h2 class="text-3xl font-black text-white leading-tight">${user.name}</h2>
                                 <div class="flex gap-2 mt-2">
-                                    <span class="bg-blue-600/20 text-blue-400 text-[10px] px-2 py-1 rounded border border-blue-500/20 font-bold uppercase">Gpo: ${user.group}</span>
-                                    <span class="bg-slate-700 text-slate-300 text-[10px] px-2 py-1 rounded font-bold uppercase">${user.startWeight} Kg</span>
+                                    <span class="bg-blue-600/20 text-blue-400 text-[10px] px-2 py-1 rounded border border-blue-500/20 font-bold uppercase tracking-wider">Grupo: ${user.group}</span>
+                                    <span class="bg-slate-700 text-slate-300 text-[10px] px-2 py-1 rounded font-bold uppercase tracking-wider">${user.startWeight} Kg</span>
                                 </div>
                             </div>
                             <div class="bg-slate-900 border border-slate-700 rounded-2xl px-4 py-3 text-center shadow-inner">
                                 <div class="text-3xl font-black text-blue-500 leading-none">${points}</div>
-                                <div class="text-[9px] text-slate-400 uppercase font-bold tracking-wider mt-1">PTS</div>
+                                <div class="text-[9px] text-slate-400 uppercase font-bold tracking-wider mt-1">SUDOR (PTS)</div>
                             </div>
-                        </div>
-
-                        <div class="mt-6 pt-6 border-t border-slate-700/50 relative z-10">
-                            <p class="text-xs text-slate-400 mb-3 text-center font-bold">Registro Diario Anti-Trampas (Solo WebCam)</p>
-                            <button onclick="window.handleLiveCapture('daily', '${user.id}')" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-black py-4 rounded-2xl shadow-lg flex justify-center items-center gap-3 active:scale-95 transition-all border border-emerald-400/50">
-                                <i data-lucide="camera" class="w-6 h-6"></i> TOMAR FOTO SUDANDO (+1 PT)
-                            </button>
                         </div>
                     </div>
 
-                    <h3 class="text-xs font-black text-slate-500 uppercase tracking-widest mb-3 ml-1 flex items-center gap-2">
-                        <i data-lucide="calendar-days" class="w-4 h-4"></i> Calendario de Constancia
-                    </h3>
-                    <div class="glass-panel p-4 rounded-2xl border border-slate-700/50 mb-6">
-                        <div class="text-sm font-bold text-white mb-3 text-center tracking-wider uppercase">${mesNombres[month]} ${year}</div>
-                        <div class="grid grid-cols-7 gap-1.5">
+                    <!-- Botón Gigante de Entrenamiento (ANTI-TRAMPAS EN VIVO) -->
+                    <button onclick="window.handleLiveCapture('${user.id}')" class="w-full bg-gradient-to-r from-red-600 to-red-500 text-white font-black py-5 rounded-2xl mb-6 shadow-lg shadow-red-900/30 flex justify-center items-center gap-3 text-lg border border-red-400/50 hover:from-red-500 hover:to-red-400 transition-all active:scale-95">
+                        <i data-lucide="flame" class="w-6 h-6"></i> ¡REGISTRAR SUDOR HOY!
+                    </button>
+
+                    <!-- Archivos de Control (GALERÍA PERMITIDA) -->
+                    <div class="glass-panel p-5 rounded-2xl mb-6 border border-slate-700/50 shadow-lg">
+                        <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-2">
+                            <i data-lucide="folder-open" class="w-4 h-4"></i> Pruebas de Control (Galería)
+                        </h3>
+                        <div class="space-y-3">
+                            <div class="bg-slate-900/80 border ${videoRealDone ? 'border-emerald-500/50' : 'border-slate-600'} p-3 rounded-xl flex justify-between items-center transition-colors">
+                                <div>
+                                    <div class="text-sm font-bold text-white flex items-center gap-2">
+                                        Video "Realidad" ${videoRealDone ? '<i data-lucide="check-circle" class="w-4 h-4 text-emerald-500"></i>' : ''}
+                                    </div>
+                                    <div class="text-[10px] text-slate-400">Sin polo (Giro 360º)</div>
+                                </div>
+                                ${!videoRealDone ? `<button onclick="window.handleGalleryUpload('real', '${user.id}')" class="bg-slate-700 hover:bg-slate-600 text-white border border-slate-600 px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-colors"><i data-lucide="upload" class="w-3 h-3 text-blue-400"></i> Subir</button>` : `<span class="text-xs font-bold text-emerald-500 bg-emerald-900/30 px-3 py-1.5 rounded-lg border border-emerald-500/30">Listo</span>`}
+                            </div>
+                            <div class="bg-slate-900/80 border ${videoRopaDone ? 'border-emerald-500/50' : 'border-slate-600'} p-3 rounded-xl flex justify-between items-center transition-colors">
+                                <div>
+                                    <div class="text-sm font-bold text-white flex items-center gap-2">
+                                        Video "Ropa Control" ${videoRopaDone ? '<i data-lucide="check-circle" class="w-4 h-4 text-emerald-500"></i>' : ''}
+                                    </div>
+                                    <div class="text-[10px] text-slate-400">Prenda mal ajustada</div>
+                                </div>
+                                ${!videoRopaDone ? `<button onclick="window.handleGalleryUpload('ropa', '${user.id}')" class="bg-slate-700 hover:bg-slate-600 text-white border border-slate-600 px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-colors"><i data-lucide="upload" class="w-3 h-3 text-blue-400"></i> Subir</button>` : `<span class="text-xs font-bold text-emerald-500 bg-emerald-900/30 px-3 py-1.5 rounded-lg border border-emerald-500/30">Listo</span>`}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="glass-panel p-5 rounded-2xl border border-slate-700/50">
+                        <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4 flex items-center justify-between">
+                            <span class="flex items-center gap-1"><i data-lucide="calendar" class="w-3 h-3"></i> Mes de ${mesNombres[month]}</span>
+                        </h3>
+                        <div class="grid grid-cols-7 gap-1">
                             ${calendarGridHtml}
-                        </div>
-                    </div>
-
-                    <h3 class="text-xs font-black text-slate-500 uppercase tracking-widest mb-3 ml-1 flex items-center gap-2">
-                        <i data-lucide="video" class="w-4 h-4"></i> Pruebas de Control
-                    </h3>
-                    <div class="space-y-3">
-                        <div class="glass-panel p-4 rounded-2xl flex items-center justify-between border ${!videoRealDone ? 'border-red-500/30 bg-red-900/10' : 'border-emerald-500/30 bg-emerald-900/10'}">
-                            <div>
-                                <h4 class="font-bold text-white text-sm">Video "Realidad"</h4>
-                                <p class="text-[10px] text-slate-400">Sin polo (Giro 360°)</p>
-                            </div>
-                            ${!videoRealDone ? `
-                                <button onclick="window.handleLiveCapture('real', '${user.id}')" class="px-4 py-2 rounded-xl font-bold text-xs bg-red-500/20 text-red-400 border border-red-500/50 flex items-center gap-2">
-                                    <i data-lucide="video" class="w-4 h-4"></i> Grabar
-                                </button>
-                            ` : `<span class="text-emerald-400 text-xs font-bold flex items-center gap-1"><i data-lucide="check-circle-2" class="w-4 h-4"></i> Listo</span>`}
-                        </div>
-
-                        <div class="glass-panel p-4 rounded-2xl flex items-center justify-between border ${!videoRopaDone ? 'border-orange-500/30 bg-orange-900/10' : 'border-emerald-500/30 bg-emerald-900/10'}">
-                            <div>
-                                <h4 class="font-bold text-white text-sm">Video "Ropa Control"</h4>
-                                <p class="text-[10px] text-slate-400">Prenda mal ajustada</p>
-                            </div>
-                            ${!videoRopaDone ? `
-                                <button onclick="window.handleLiveCapture('ropa', '${user.id}')" class="px-4 py-2 rounded-xl font-bold text-xs bg-orange-500/20 text-orange-400 border border-orange-500/50 flex items-center gap-2">
-                                    <i data-lucide="video" class="w-4 h-4"></i> Grabar
-                                </button>
-                            ` : `<span class="text-emerald-400 text-xs font-bold flex items-center gap-1"><i data-lucide="check-circle-2" class="w-4 h-4"></i> Listo</span>`}
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-
-        function renderBases(container) {
-            container.innerHTML = `
-                <div class="animate-fade-in pb-8">
-                    <h2 class="text-2xl font-black text-white mb-1 text-center mt-2">Bases Oficiales</h2>
-                    <p class="text-xs text-blue-400 font-bold text-center mb-6 uppercase tracking-widest">YA NO QUIERO ESTAR COMO EL CHULO</p>
-                    
-                    <div class="space-y-4">
-                        <div class="glass-panel p-5 rounded-2xl border border-slate-700/50">
-                            <h3 class="text-lg font-black text-white mb-2 flex items-center gap-2"><span class="bg-blue-600 w-6 h-6 flex items-center justify-center rounded-full text-xs">1</span> El Sudor Diario</h3>
-                            <p class="text-sm text-blue-400 font-bold">+1 Pto por día entrenado.</p>
-                            <p class="text-xs text-slate-400 mt-2">Cámara en vivo obligatoria. La galería está prohibida. Auditoría final el 30 Oct. Si se detecta trampa: <span class="text-red-400 font-bold">-2 Puntos</span>.</p>
-                        </div>
-
-                        <div class="glass-panel p-5 rounded-2xl border border-slate-700/50">
-                            <h3 class="text-lg font-black text-white mb-2 flex items-center gap-2"><span class="bg-blue-600 w-6 h-6 flex items-center justify-center rounded-full text-xs">2</span> Categorías de Peso</h3>
-                            <p class="text-xs text-slate-300 mb-3">La app calcula tu porcentaje de mejora (PCP) según tu IMC inicial.</p>
-                            <div class="grid grid-cols-2 gap-2">
-                                <div class="bg-slate-900/50 p-2 rounded-xl border border-slate-700">
-                                    <div class="text-[10px] font-bold text-red-400 mb-1">GRUPO A (Bajar)</div>
-                                    <div class="text-[10px] text-white">3% a 5% = +10 Pts</div>
-                                    <div class="text-[10px] text-white">5% a 8% = +15 Pts</div>
-                                    <div class="text-[10px] text-white">> 8% = +20 Pts</div>
-                                </div>
-                                <div class="bg-slate-900/50 p-2 rounded-xl border border-slate-700">
-                                    <div class="text-[10px] font-bold text-emerald-400 mb-1">GRUPO B (Subir)</div>
-                                    <div class="text-[10px] text-white">2% a 4% = +15 Pts</div>
-                                    <div class="text-[10px] text-white">> 4% = +10 Pts</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="glass-panel p-5 rounded-2xl border border-slate-700/50">
-                            <h3 class="text-lg font-black text-white mb-2 flex items-center gap-2"><span class="bg-blue-600 w-6 h-6 flex items-center justify-center rounded-full text-xs">3</span> Los Videos Visuales</h3>
-                            <ul class="text-xs text-slate-400 space-y-2">
-                                <li><strong>Set 1 Realidad:</strong> Sin polo en short. Giro de 360 grados.</li>
-                                <li><strong>Set 2 Control:</strong> Usar la misma ropa mal ajustada (1 polo, 1 pantalón) en el video inicial y final.</li>
-                            </ul>
-                        </div>
-
-                        <div class="glass-panel p-5 rounded-2xl border border-blue-500/50 bg-blue-900/10">
-                            <h3 class="text-lg font-black text-blue-400 mb-2 flex items-center gap-2"><span class="bg-blue-600 text-white w-6 h-6 flex items-center justify-center rounded-full text-xs">4</span> La Gran Final</h3>
-                            <ul class="text-xs text-white space-y-2">
-                                <li>👁️ <strong>Votación:</strong> Todos votan del 1 al 5 el cambio visual de los compañeros.</li>
-                                <li>🏆 <strong>Ganadores:</strong> La suma total define el Top 3.</li>
-                                <li>💀 <strong>Penitencia:</strong> Los últimos 2 lugares pagan el castigo.</li>
-                            </ul>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-
-        function renderRetos(container) {
-            container.innerHTML = `
-                <div class="animate-fade-in pb-6">
-                    <h2 class="text-2xl font-black text-white mb-1 text-center mt-2">Reto Semanal</h2>
-                    <p class="text-xs text-slate-400 text-center mb-6">Demuestra tu disciplina alimenticia.</p>
-                    
-                    <div class="space-y-4">
-                        <div class="glass-panel p-6 rounded-3xl border-2 border-emerald-500/50 relative overflow-hidden bg-emerald-900/10 shadow-lg shadow-emerald-900/20">
-                            <div class="absolute -right-4 -top-4 text-7xl opacity-10">🥩</div>
-                            <div class="flex justify-between items-start mb-3">
-                                <h3 class="text-xl font-black text-emerald-400">El Rey de la Proteína</h3>
-                                <span class="bg-emerald-600 text-white text-[10px] font-black px-3 py-1.5 rounded-lg shadow-inner">+4 PUNTOS</span>
-                            </div>
-                            <p class="text-sm text-slate-300 mb-4 leading-relaxed">Sube al grupo de WhatsApp 1 foto diaria de tus almuerzos demostrando que la mitad de tu plato es proteína o verdura.</p>
-                            <div class="bg-slate-900/60 p-3 rounded-xl border border-slate-700/50">
-                                <p class="text-xs text-slate-400"><strong class="text-emerald-500 font-bold">Validación:</strong> Auditable por todos los miembros durante 5 días seguidos en el chat.</p>
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -733,39 +680,44 @@
         }
 
         function renderRanking(container) {
-            const sortedUsers = [...window.appState.allUsers].sort((a, b) => {
-                const countA = a.trainingDays ? a.trainingDays.length : 0;
-                const countB = b.trainingDays ? b.trainingDays.length : 0;
-                return countB - countA;
+            let sortedUsers = [...window.appState.allUsers].sort((a, b) => {
+                const aPoints = a.trainingDays ? a.trainingDays.length : 0;
+                const bPoints = b.trainingDays ? b.trainingDays.length : 0;
+                return bPoints - aPoints;
             });
 
             let html = `
-                <div class="animate-fade-in pb-6">
-                    <h2 class="text-2xl font-black text-white mb-1 text-center mt-2">Ranking General</h2>
-                    <p class="text-xs text-slate-400 text-center mb-6">Basado en días de sudor verificados</p>
+                <div class="animate-fade-in pb-8">
+                    <div class="text-center mb-8">
+                        <i data-lucide="trophy" class="w-12 h-12 text-amber-400 mx-auto mb-2 drop-shadow-[0_0_15px_rgba(251,191,36,0.4)]"></i>
+                        <h2 class="text-2xl font-black text-white">Salón del Olimpo</h2>
+                        <p class="text-xs text-slate-400">Clasificación por Constancia</p>
+                    </div>
                     <div class="space-y-3">
             `;
 
             sortedUsers.forEach((user, index) => {
-                let badge = `<div class="w-10 h-10 flex items-center justify-center font-black text-slate-500 text-lg bg-slate-900 rounded-full border border-slate-700 shadow-inner">#${index+1}</div>`;
-                if(index === 0) badge = `<div class="w-10 h-10 flex items-center justify-center text-3xl drop-shadow-[0_0_8px_rgba(250,204,21,0.6)]">🥇</div>`;
-                if(index === 1) badge = `<div class="w-10 h-10 flex items-center justify-center text-3xl drop-shadow-[0_0_8px_rgba(156,163,175,0.6)]">🥈</div>`;
-                if(index === 2) badge = `<div class="w-10 h-10 flex items-center justify-center text-3xl drop-shadow-[0_0_8px_rgba(180,83,9,0.6)]">🥉</div>`;
-
                 const points = user.trainingDays ? user.trainingDays.length : 0;
+                let positionStyle = "bg-slate-800 text-slate-400 border-slate-700";
+                if(index === 0) positionStyle = "bg-amber-400 text-black border-amber-300 shadow-[0_0_15px_rgba(251,191,36,0.3)]";
+                else if(index === 1) positionStyle = "bg-slate-300 text-black border-slate-200";
+                else if(index === 2) positionStyle = "bg-amber-700 text-white border-amber-600";
                 
+                // Los peores
+                if(index >= sortedUsers.length - 2 && sortedUsers.length > 3) positionStyle = "bg-red-900/50 text-red-400 border-red-800";
+
                 html += `
-                    <div class="glass-panel p-4 rounded-2xl flex items-center justify-between border border-slate-700/50">
-                        <div class="flex items-center gap-4">
-                            ${badge}
-                            <div>
-                                <h3 class="font-bold text-white text-lg leading-tight">${user.name}</h3>
-                                <p class="text-[10px] text-slate-400 font-bold uppercase mt-1">Gpo ${user.group.charAt(0)}</p>
-                            </div>
+                    <div class="glass-panel flex items-center p-3 rounded-2xl border border-slate-700/50">
+                        <div class="w-10 h-10 rounded-full flex items-center justify-center font-black text-lg border ${positionStyle} flex-shrink-0 z-10">
+                            ${index + 1}
                         </div>
-                        <div class="text-right flex flex-col items-end">
-                            <span class="text-2xl font-black text-blue-400 leading-none">${points}</span>
-                            <span class="text-[8px] text-slate-500 font-black uppercase mt-1">PTS</span>
+                        <div class="ml-4 flex-grow">
+                            <h3 class="font-bold text-white text-lg leading-none">${user.name}</h3>
+                            <div class="text-[10px] text-slate-400 mt-1 uppercase font-bold">${user.group}</div>
+                        </div>
+                        <div class="text-right">
+                            <div class="font-black text-2xl text-white leading-none">${points}</div>
+                            <div class="text-[8px] uppercase font-bold text-slate-500">Pts</div>
                         </div>
                     </div>
                 `;
@@ -774,43 +726,125 @@
             container.innerHTML = html;
         }
 
+        function renderBases(container) {
+            container.innerHTML = `
+                <div class="animate-fade-in pb-8">
+                    <h2 class="text-2xl font-black text-white mb-2">Bases del Reto</h2>
+                    <p class="text-xs text-slate-400 mb-6">Reglamento Oficial: 18 Agosto - 30 Octubre</p>
+                    
+                    <div class="space-y-4">
+                        <div class="bg-slate-800 p-5 rounded-2xl border border-slate-700">
+                            <h3 class="font-black text-white text-sm flex items-center gap-2 mb-2"><i data-lucide="droplet" class="w-4 h-4 text-blue-400"></i> 1. El Sudor Diario (Constancia)</h3>
+                            <p class="text-xs text-slate-300 leading-relaxed">
+                                <strong>+1 Punto</strong> por cada día de entrenamiento validado en la app.<br><br>
+                                <span class="text-red-400 font-bold">REGLA ANTI-TRAMPAS:</span> La foto diaria debe tomarse con la cámara EN VIVO de la app. Prohibida la galería. En la auditoría final (30 Oct), si alguien te descubre una foto repetida/falsa, <strong>pierdes 2 puntos.</strong>
+                            </p>
+                        </div>
+
+                        <div class="bg-slate-800 p-5 rounded-2xl border border-slate-700">
+                            <h3 class="font-black text-white text-sm flex items-center gap-2 mb-2"><i data-lucide="scale" class="w-4 h-4 text-emerald-400"></i> 2. El Peso Justo</h3>
+                            <p class="text-xs text-slate-300 leading-relaxed mb-3">
+                                Se evalúa el % de cambio de peso según tu grupo para que sea justo para flacos y gordos.
+                            </p>
+                            <div class="bg-slate-900 p-3 rounded-xl border border-slate-700 mb-2">
+                                <span class="text-[10px] font-black text-blue-400">GRUPO A (Bajar Grasa):</span>
+                                <ul class="text-[10px] text-slate-400 mt-1 list-disc pl-4 space-y-1">
+                                    <li>Bajar entre 3% y 5% = 10 Puntos</li>
+                                    <li>Bajar entre 5.1% y 8% = 15 Puntos</li>
+                                    <li>Bajar más del 8% = 20 Puntos</li>
+                                </ul>
+                            </div>
+                            <div class="bg-slate-900 p-3 rounded-xl border border-slate-700">
+                                <span class="text-[10px] font-black text-emerald-400">GRUPO B (Volumen Limpio):</span>
+                                <ul class="text-[10px] text-slate-400 mt-1 list-disc pl-4 space-y-1">
+                                    <li>Subir entre 2% y 4% = 15 Puntos (Premia volumen limpio)</li>
+                                    <li>Subir más del 4% = 10 Puntos (Mucha grasa)</li>
+                                </ul>
+                            </div>
+                        </div>
+
+                        <div class="bg-slate-800 p-5 rounded-2xl border border-slate-700">
+                            <h3 class="font-black text-white text-sm flex items-center gap-2 mb-2"><i data-lucide="video" class="w-4 h-4 text-purple-400"></i> 3. La Métrica Visual (Videos)</h3>
+                            <p class="text-xs text-slate-300 leading-relaxed">
+                                El espejo no miente. El Día 1 y el Día Final grabaremos 2 videos de control:
+                                <br><br><strong>Video Realidad:</strong> Sin polo, en short (giro de 360º).
+                                <br><strong>Video Ropa:</strong> Con una prenda que te quede mal hoy.
+                                <br><br>Se guardan ocultos hasta el 30 de Octubre.
+                            </p>
+                        </div>
+
+                        <div class="bg-slate-800 p-5 rounded-2xl border border-amber-700/50 relative overflow-hidden">
+                            <div class="absolute right-0 top-0 opacity-10"><i data-lucide="gavel" class="w-24 h-24"></i></div>
+                            <h3 class="font-black text-amber-400 text-sm flex items-center gap-2 mb-2">4. El Veredicto Final</h3>
+                            <p class="text-xs text-slate-300 leading-relaxed relative z-10">
+                                El 30 de Octubre nos reunimos. Se suma la Constancia + Los Puntos de Peso. <br><br>
+                                Finalmente, la <strong>Votación Estética:</strong> Proyectaremos los videos del Antes y Después. Todos votarán del 1 al 5 el cambio visual de sus compañeros.
+                                <br><br>Los 2 últimos... <span class="text-red-400 font-bold">PAGAN PENITENCIA.</span>💀
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderRetos(container) {
+            container.innerHTML = `
+                <div class="animate-fade-in pb-8">
+                    <h2 class="text-2xl font-black text-white mb-2">Retos Especiales</h2>
+                    <p class="text-xs text-slate-400 mb-6">Puntos extra para la gloria</p>
+
+                    <div class="bg-gradient-to-br from-orange-900 to-red-900 p-6 rounded-3xl border border-orange-500/50 shadow-2xl relative overflow-hidden">
+                        <i data-lucide="drumstick" class="absolute -right-4 -bottom-4 w-32 h-32 text-orange-500/20"></i>
+                        <h3 class="text-xl font-black text-white mb-2 relative z-10">El Rey de la Proteína 🥩</h3>
+                        <p class="text-sm text-orange-200 mb-4 relative z-10">
+                            Para evitar perder músculo (Grupo A) o para construir volumen (Grupo B).
+                        </p>
+                        <div class="bg-black/30 p-4 rounded-xl relative z-10 border border-orange-500/30">
+                            <p class="text-xs text-white font-bold mb-2">Misión:</p>
+                            <p class="text-xs text-slate-300">
+                                Sube al grupo de WhatsApp 1 foto de tus almuerzos o cenas demostrando que estás comiendo buena proteína (pollo, carne, huevos, etc).
+                            </p>
+                            <div class="mt-4 flex justify-between items-center border-t border-white/10 pt-3">
+                                <span class="text-[10px] text-orange-300 uppercase font-black tracking-widest">Recompensa</span>
+                                <span class="bg-orange-500 text-white font-black px-3 py-1 rounded text-sm shadow-lg">+4 PTS</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
         function renderAdmin(container) {
             let html = `
                 <div class="animate-fade-in pb-8">
-                    <button onclick="window.switchTab('home')" class="mb-4 flex items-center gap-2 text-sm text-slate-400 font-bold hover:text-white">
-                        <i data-lucide="arrow-left" class="w-4 h-4"></i> Volver
-                    </button>
-                    <h2 class="text-2xl font-black text-white mb-1 flex items-center gap-2">
-                        <i data-lucide="shield-check" class="w-6 h-6 text-amber-400"></i> Panel Supremo
-                    </h2>
-                    <p class="text-xs text-slate-400 mb-6">Gestión de participantes</p>
-
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-2xl font-black text-amber-400 flex items-center gap-2">
+                            <i data-lucide="shield-check" class="w-6 h-6"></i> Admin
+                        </h2>
+                        <button onclick="window.switchTab('home')" class="text-xs bg-slate-800 text-slate-300 px-3 py-1.5 rounded-lg border border-slate-700">Salir</button>
+                    </div>
                     <div class="space-y-3">
             `;
 
             window.appState.allUsers.forEach(user => {
-                const days = user.trainingDays ? user.trainingDays.length : 0;
                 html += `
-                    <div class="bg-slate-800/80 p-4 rounded-2xl flex flex-col border border-slate-600 gap-3">
-                        <div class="flex items-center justify-between">
-                            <div>
-                                <h3 class="font-bold text-white text-base">${user.name}</h3>
-                                <p class="text-[10px] text-slate-400 mt-1">PIN: <span class="text-amber-400 font-mono font-bold">${user.pin}</span> | Peso: ${user.startWeight} Kg</p>
-                            </div>
-                            <span class="text-lg font-black text-slate-500 bg-slate-900 px-3 py-1 rounded-xl">${days} pts</span>
+                    <div class="glass-panel p-4 rounded-2xl border border-slate-700/50 flex justify-between items-center">
+                        <div>
+                            <h3 class="font-bold text-white">${user.name}</h3>
+                            <div class="text-[10px] text-slate-400 mt-1">PIN: <span class="text-amber-400 tracking-widest font-black">${user.pin}</span></div>
                         </div>
-                        <div class="flex gap-2 w-full mt-2 pt-3 border-t border-slate-700/50">
-                            <button onclick="window.openEditModal('${user.id}')" class="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2.5 rounded-xl text-xs font-bold flex justify-center items-center gap-1 transition-colors">
+                        <div class="flex gap-2">
+                            <button onclick="window.openEditModal('${user.id}')" class="bg-blue-900/30 text-blue-400 border border-blue-800 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors">
                                 <i data-lucide="edit-2" class="w-4 h-4"></i> Editar
                             </button>
-                            <button onclick="window.deleteCompetitor('${user.id}')" class="flex-1 bg-red-600 hover:bg-red-500 text-white py-2.5 rounded-xl text-xs font-black flex justify-center items-center gap-1 shadow-lg shadow-red-900/50 transition-colors">
+                            <button onclick="window.deleteCompetitor('${user.id}')" class="bg-red-900/30 text-red-400 border border-red-800 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors">
                                 <i data-lucide="trash-2" class="w-4 h-4"></i> Borrar
                             </button>
                         </div>
                     </div>
                 `;
             });
-
+            
             html += `</div></div>`;
             container.innerHTML = html;
         }
