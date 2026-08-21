@@ -43,7 +43,8 @@
           projectId: "app-de-ejercicio-a99db",
           storageBucket: "app-de-ejercicio-a99db.firebasestorage.app",
           messagingSenderId: "74777587908",
-          appId: "1:74777587908:web:9ec006c45230a7e91c1991"
+          appId: "1:74777587908:web:9ec006c45230a7e91c1991",
+          measurementId: "G-XKXCW6P675"
         };
 
         // --- CREDENCIALES CLOUDINARY CONFIGURADAS ---
@@ -293,9 +294,19 @@
                     if (!response.ok) throw new Error("Error en Cloudinary");
                     const data = await response.json();
                     
-                    const fileUrl = data.secure_url; 
+                    let fileUrl = data.secure_url; 
                     const tipoArch = file.type.startsWith('video') ? 'video' : 'image';
                     
+                    // --- FIX DE MAGIA CLOUDINARY PARA IPHONE Y FORMATOS RAROS ---
+                    // Obligamos a Cloudinary a convertir CUALQUIER imagen a JPG web-safe (f_auto)
+                    if (fileUrl.includes('/upload/') && !fileUrl.includes('f_auto')) {
+                        fileUrl = fileUrl.replace('/upload/', '/upload/f_auto,q_auto/');
+                    }
+                    if (tipoArch === 'image') {
+                        fileUrl = fileUrl.replace(/\.heic$/i, '.jpg').replace(/\.heif$/i, '.jpg');
+                    }
+                    // -------------------------------------------
+
                     const now = new Date();
                     // Formato exacto con día, mes, hora y minuto
                     const optionsDate = { day: '2-digit', month: '2-digit', year: 'numeric' };
@@ -304,26 +315,28 @@
 
                     if(type === 'sudor') {
                         const todayStr = now.toISOString().split('T')[0];
-                        const userRef = doc(window.db, 'competitors', userId);
                         
+                        // 1. REGLA DE ORO: PRIMERO GUARDAMOS LA FOTO
+                        // Si este paso falla, el sistema saltará al 'catch' y NUNCA dará el punto.
+                        await setDoc(doc(window.db, `competitors/${userId}/fotos_sudor`, todayStr), {
+                            url: fileUrl,
+                            fecha: dateStr,
+                            tipoArch: tipoArch
+                        });
+
+                        // 2. FOTO CONFIRMADA: AHORA SÍ DAMOS EL PUNTO (Actualizamos trainingDays)
+                        const userRef = doc(window.db, 'competitors', userId);
                         const user = window.appState.allUsers.find(u => u.id === userId);
-                        // Si ya tenía trainingDays hoy, no duplicamos el día pero se sobreescribe la foto del día
                         const trainingDaysSet = new Set(user.trainingDays || []);
                         trainingDaysSet.add(todayStr);
                         const newDays = Array.from(trainingDaysSet);
                         
                         await updateDoc(userRef, { trainingDays: newDays });
                         
-                        // Guarda o sobreescribe la foto exacta del día
-                        await setDoc(doc(window.db, `competitors/${userId}/fotos_sudor`, todayStr), {
-                            url: fileUrl,
-                            fecha: dateStr,
-                            tipoArch: tipoArch
-                        });
                         window.showToast("¡Sudor de hoy registrado correctamente! 🔥");
                         
                     } else if (type === 'real' || type === 'ropa') {
-                        // Se guarda con ID fijo 'real' o 'ropa' para que si suben otra vez, se sobreescriba limpiamente
+                        // Se guarda con ID fijo 'real' o 'ropa'
                         const photoRef = doc(window.db, `competitors/${userId}/fotos_control`, type);
                         await setDoc(photoRef, {
                             url: fileUrl,
@@ -355,7 +368,7 @@
                     }
                 } catch (error) {
                     console.error(error);
-                    window.showToast("Error al subir archivo. Revisa tu internet.", "error");
+                    window.showToast("Error. No se guardó la foto. Intenta de nuevo.", "error");
                 }
             };
             input.click();
@@ -462,8 +475,18 @@
                 } else {
                     controlSnap.forEach(docSnap => {
                         const data = docSnap.data();
+                        
+                        // FIX HEIC (Aplicando transformación universal para registros antiguos también)
+                        let safeUrl = data.url;
+                        if (safeUrl && safeUrl.includes('/upload/') && !safeUrl.includes('f_auto')) {
+                            safeUrl = safeUrl.replace('/upload/', '/upload/f_auto,q_auto/');
+                        }
+                        if (data.tipoArch !== 'video' && safeUrl) {
+                            safeUrl = safeUrl.replace(/\.heic$/i, '.jpg').replace(/\.heif$/i, '.jpg');
+                        }
+
                         html += `<div class="border border-slate-700 rounded-xl p-2.5 bg-slate-900 shadow-xl relative overflow-hidden group">
-                          ${data.tipoArch === 'video' ? `<video src="${data.url}" controls playsinline class="w-full aspect-square object-cover rounded-lg mb-2 bg-black"></video>` : `<img src="${data.url}" onclick="window.open('${data.url}')" class="w-full aspect-square object-cover rounded-lg mb-2 cursor-pointer hover:opacity-80 transition">`}
+                          ${data.tipoArch === 'video' ? `<video src="${safeUrl}" controls playsinline class="w-full aspect-square object-cover rounded-lg mb-2 bg-black"></video>` : `<img src="${safeUrl}" onclick="window.open('${safeUrl}')" class="w-full aspect-square object-cover rounded-lg mb-2 cursor-pointer hover:opacity-80 transition">`}
                           <div class="absolute top-3 right-3 bg-black/80 backdrop-blur px-2 py-1 rounded text-[10px] font-black text-amber-400 uppercase">${docSnap.id}</div>
                           <div class="text-[11px] font-bold text-slate-300 bg-slate-800 p-1.5 rounded mb-2 text-center"><i data-lucide="calendar" class="w-3 h-3 inline text-amber-400"></i> ${data.fecha}</div>
                           <button onclick="window.deleteUserFile('${userId}', 'fotos_control', '${docSnap.id}', '${docSnap.id}')" class="w-full bg-red-500/20 hover:bg-red-500/30 text-red-400 text-xs font-black py-1.5 rounded-lg border border-red-500/40 flex items-center justify-center gap-1 transition"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Eliminar</button>
@@ -480,8 +503,18 @@
                 } else {
                     sudorSnap.forEach(docSnap => {
                         const data = docSnap.data();
+                        
+                        // FIX HEIC (Aplicando transformación universal para registros antiguos también)
+                        let safeUrl = data.url;
+                        if (safeUrl && safeUrl.includes('/upload/') && !safeUrl.includes('f_auto')) {
+                            safeUrl = safeUrl.replace('/upload/', '/upload/f_auto,q_auto/');
+                        }
+                        if (data.tipoArch !== 'video' && safeUrl) {
+                            safeUrl = safeUrl.replace(/\.heic$/i, '.jpg').replace(/\.heif$/i, '.jpg');
+                        }
+
                         html += `<div class="border border-slate-700 rounded-xl p-2.5 bg-slate-900 shadow-xl relative overflow-hidden">
-                          ${data.tipoArch === 'video' ? `<video src="${data.url}" controls playsinline class="w-full aspect-square object-cover rounded-lg mb-2 bg-black"></video>` : `<img src="${data.url}" onclick="window.open('${data.url}')" class="w-full aspect-square object-cover rounded-lg mb-2 cursor-pointer hover:opacity-80 transition">`}
+                          ${data.tipoArch === 'video' ? `<video src="${safeUrl}" controls playsinline class="w-full aspect-square object-cover rounded-lg mb-2 bg-black"></video>` : `<img src="${safeUrl}" onclick="window.open('${safeUrl}')" class="w-full aspect-square object-cover rounded-lg mb-2 cursor-pointer hover:opacity-80 transition">`}
                           <div class="absolute top-3 right-3 bg-blue-600/90 backdrop-blur px-2 py-1 rounded text-[10px] font-black text-white">Día: ${docSnap.id}</div>
                           <div class="text-[11px] font-bold text-slate-300 bg-slate-800 p-1.5 rounded mb-2 text-center"><i data-lucide="calendar" class="w-3 h-3 inline text-blue-400"></i> ${data.fecha}</div>
                           <button onclick="window.deleteUserFile('${userId}', 'fotos_sudor', '${docSnap.id}', 'sudor')" class="w-full bg-red-500/20 hover:bg-red-500/30 text-red-400 text-xs font-black py-1.5 rounded-lg border border-red-500/40 flex items-center justify-center gap-1 transition"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Eliminar</button>
@@ -755,6 +788,15 @@
                     const trampa = meal.votosTrampa ? meal.votosTrampa.length : 0;
                     const isSano = sanos > trampa;
                     
+                    // FIX HEIC para muro de comidas también
+                    let safeUrl = meal.url;
+                    if (safeUrl && safeUrl.includes('/upload/') && !safeUrl.includes('f_auto')) {
+                        safeUrl = safeUrl.replace('/upload/', '/upload/f_auto,q_auto/');
+                    }
+                    if (safeUrl) {
+                        safeUrl = safeUrl.replace(/\.heic$/i, '.jpg').replace(/\.heif$/i, '.jpg');
+                    }
+                    
                     html += `
                         <div class="bg-slate-800 border ${isSano && sanos > 0 ? 'border-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.15)]' : 'border-slate-700 shadow-xl'} rounded-2xl overflow-hidden transition-all">
                             <div class="p-4 flex justify-between items-center bg-slate-900/50 border-b border-slate-700/50">
@@ -765,7 +807,7 @@
                                 <span class="text-[10px] text-slate-400 font-bold flex items-center gap-1"><i data-lucide="clock" class="w-3 h-3"></i> ${meal.fecha}</span>
                             </div>
                             <div class="relative bg-black">
-                                <img src="${meal.url}" class="w-full h-56 object-cover opacity-90 hover:opacity-100 transition-opacity" alt="Comida">
+                                <img src="${safeUrl}" class="w-full h-56 object-cover opacity-90 hover:opacity-100 transition-opacity" alt="Comida">
                                 ${isSano && sanos > 0 ? '<div class="absolute top-3 right-3 bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs font-black shadow-lg flex items-center gap-1 backdrop-blur-sm border border-emerald-400"><i data-lucide="check-square" class="w-4 h-4"></i> VALIDADA</div>' : ''}
                             </div>
                             <div class="p-4 flex gap-3 bg-slate-800">
